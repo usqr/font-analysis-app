@@ -7,7 +7,7 @@ A desktop-oriented web app for scanning, storing, analyzing, and comparing font 
 - **Font Library** — Scan local folders or download from Google Fonts. Fonts are grouped by family with width tabs, style toggles, and collapsible cards. List and grid views with live "Aa" previews.
 - **Filtering** — Category radio buttons (Serif, Sans-Serif, Monospace, Display, Script), text search, and histogram-based range filters for contrast, weight, width, and x-height.
 - **Analyze** — Per-font analysis views: stroke contrast, x-height, proportions, weight distribution, spacing, and a paginated glyph grid with OTF feature filtering. Sidebar shows OpenType features and raw metadata (name, OS/2, head, post tables).
-- **Compare** — Overlay multiple fonts on a shared canvas with normalize toggle and auto-fit text sizing.
+- **Compare** — Overlay multiple fonts on a shared canvas with normalize toggle and auto-fit text sizing. Collapsible info panel with drag-resizable width.
 - **Format Support** — TTF, OTF, WOFF, WOFF2 (decompressed via wawoff2).
 - **Smart Naming** — Handles URW-style abbreviated names, typographic subfamily (name ID 17), super-family grouping across width variants, and fallback naming from filenames.
 - **Deduplication** — Variant-key dedup with format priority (OTF > TTF > WOFF > WOFF2), source-aware (local vs Google fonts coexist).
@@ -90,4 +90,4 @@ The Playwright config auto-starts the dev server before running tests.
 
 ## Known Issues
 
-- **GlyphsView crash** — The Glyphs tab can crash on certain fonts (e.g., IBM 3270) due to unexpected GSUB subtable structures. Needs a React error boundary and deeper investigation of edge-case font table layouts.
+None currently tracked.

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import * as opentype from 'opentype.js';
 import type { Font } from 'opentype.js';
@@ -7,6 +7,9 @@ import { analyzeXHeight } from '../analysis/xHeight';
 import { useCanvasResize } from '../lib/useCanvasResize';
 
 const COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#a855f7'];
+const SIDEBAR_DEFAULT = 288;
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 500;
 
 interface LoadedFont {
   id: string;
@@ -26,9 +29,32 @@ export function CompareView() {
   const [text, setText] = useState('Aa');
   const [fontSize, setFontSize] = useState(200);
   const [normalize, setNormalize] = useState(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
+  const draggingRef = useRef(false);
+  const dragStartXRef = useRef(0);
+  const dragStartWidthRef = useRef(SIDEBAR_DEFAULT);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const resizeCount = useCanvasResize(canvasWrapRef);
+
+  const onDragStart = useCallback((e: ReactPointerEvent) => {
+    e.preventDefault();
+    draggingRef.current = true;
+    dragStartXRef.current = e.clientX;
+    dragStartWidthRef.current = sidebarWidth;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }, [sidebarWidth]);
+
+  const onDragMove = useCallback((e: ReactPointerEvent) => {
+    if (!draggingRef.current) return;
+    const delta = dragStartXRef.current - e.clientX;
+    setSidebarWidth(Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, dragStartWidthRef.current + delta)));
+  }, []);
+
+  const onDragEnd = useCallback(() => {
+    draggingRef.current = false;
+  }, []);
 
   useEffect(() => {
     const ids = searchParams.get('ids')?.split(',').filter(Boolean) ?? [];
@@ -205,159 +231,194 @@ export function CompareView() {
         </div>
       </div>
 
-      {/* Controls sidebar */}
-      <aside className="w-full shrink-0 overflow-y-auto border-t border-neutral-800 p-4 lg:w-72 lg:border-l lg:border-t-0">
-        <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-neutral-400">
-          Compare Controls
-        </h2>
-
-        {/* Text input */}
-        <div className="mb-4">
-          <label className="mb-1 block text-xs text-neutral-400">
-            Sample text
-          </label>
-          <input
-            type="text"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            className="w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-200 outline-none focus:border-blue-500"
+      {/* Drag handle + Controls sidebar */}
+      <div className="flex shrink-0 flex-col border-t border-neutral-800 lg:flex-row lg:border-t-0">
+        {/* Drag handle (large screens only) */}
+        {!sidebarCollapsed && (
+          <div
+            className="hidden w-1 cursor-col-resize items-center justify-center bg-neutral-800 transition-colors hover:bg-blue-600 lg:flex"
+            onPointerDown={onDragStart}
+            onPointerMove={onDragMove}
+            onPointerUp={onDragEnd}
+            onPointerCancel={onDragEnd}
           />
-        </div>
+        )}
 
-        {/* Font size slider */}
-        <div className="mb-4">
-          <label className="mb-1 flex items-center justify-between text-xs text-neutral-400">
-            <span>Size</span>
-            <span>{fontSize}px</span>
-          </label>
-          <input
-            type="range"
-            min={50}
-            max={500}
-            value={fontSize}
-            onChange={(e) => setFontSize(Number(e.target.value))}
-            className="w-full accent-blue-500"
-          />
-        </div>
-
-        {/* Normalize toggle */}
-        <button
-          onClick={() => setNormalize((v) => !v)}
-          className="mb-6 flex w-full cursor-pointer items-center gap-2"
+        <aside
+          className={`overflow-y-auto border-neutral-800 lg:border-l ${sidebarCollapsed ? 'w-full lg:w-10' : 'w-full'}`}
+          style={!sidebarCollapsed ? { width: `${sidebarWidth}px` } : undefined}
         >
-          <span className={`flex h-5 w-9 items-center rounded-full px-0.5 transition-colors ${normalize ? 'bg-blue-600' : 'bg-neutral-700'}`}>
-            <span className={`h-4 w-4 rounded-full bg-white transition-transform ${normalize ? 'translate-x-4' : 'translate-x-0'}`} />
-          </span>
-          <span className="text-sm text-neutral-300">Normalize x-height</span>
-        </button>
-
-        {/* Font legend */}
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-400">
-          Fonts
-        </h3>
-        <div className="space-y-2">
-          {fonts.map((lf, i) => (
-            <label
-              key={lf.id}
-              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-neutral-800"
+          <div
+            className={sidebarCollapsed ? 'flex items-start justify-center pt-2 lg:h-full' : 'p-4'}
+          >
+            {/* Collapse toggle */}
+            <button
+              onClick={() => setSidebarCollapsed(v => !v)}
+              className="mb-2 flex h-6 w-6 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-700 hover:text-neutral-200"
+              title={sidebarCollapsed ? 'Show panel' : 'Hide panel'}
             >
-              <input
-                type="checkbox"
-                checked={lf.visible}
-                onChange={() => toggleVisibility(lf.id)}
-                className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-800 accent-blue-500"
-              />
-              <span
-                className="h-3 w-3 shrink-0 rounded-full"
-                style={{ backgroundColor: COLORS[i % COLORS.length] }}
-              />
-              <div className="min-w-0 flex-1">
-                <span className="block truncate text-sm text-neutral-200">
-                  {lf.familyName}
-                </span>
-                <span className="block truncate text-xs text-neutral-500">
-                  {lf.subfamilyName}
-                </span>
-              </div>
-            </label>
-          ))}
-        </div>
+              <svg viewBox="0 0 16 16" fill="currentColor" className={`h-3.5 w-3.5 transition-transform ${sidebarCollapsed ? 'rotate-180' : ''}`}>
+                <path d="M10.354 3.354a.5.5 0 0 0-.708-.708l-5 5a.5.5 0 0 0 0 .708l5 5a.5.5 0 0 0 .708-.708L5.707 8l4.647-4.646z"/>
+              </svg>
+            </button>
 
-        {/* Metrics comparison */}
-        <div className="mt-6 border-t border-neutral-800 pt-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-400">
-            Metrics
-          </h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-neutral-800">
-                  <th className="pb-2 pr-2 text-left text-neutral-500">Metric</th>
+            {!sidebarCollapsed && (
+              <>
+                <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-neutral-400">
+                  Compare Controls
+                </h2>
+
+                {/* Text input */}
+                <div className="mb-4">
+                  <label className="mb-1 block text-xs text-neutral-400">
+                    Sample text
+                  </label>
+                  <input
+                    type="text"
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    className="w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-200 outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                {/* Font size slider */}
+                <div className="mb-4">
+                  <label className="mb-1 flex items-center justify-between text-xs text-neutral-400">
+                    <span>Size</span>
+                    <span>{fontSize}px</span>
+                  </label>
+                  <input
+                    type="range"
+                    min={50}
+                    max={500}
+                    value={fontSize}
+                    onChange={(e) => setFontSize(Number(e.target.value))}
+                    className="w-full accent-blue-500"
+                  />
+                </div>
+
+                {/* Normalize toggle */}
+                <button
+                  onClick={() => setNormalize((v) => !v)}
+                  className="mb-6 flex w-full cursor-pointer items-center gap-2"
+                >
+                  <span className={`flex h-5 w-9 items-center rounded-full px-0.5 transition-colors ${normalize ? 'bg-blue-600' : 'bg-neutral-700'}`}>
+                    <span className={`h-4 w-4 rounded-full bg-white transition-transform ${normalize ? 'translate-x-4' : 'translate-x-0'}`} />
+                  </span>
+                  <span className="text-sm text-neutral-300">Normalize x-height</span>
+                </button>
+
+                {/* Font legend */}
+                <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-400">
+                  Fonts
+                </h3>
+                <div className="space-y-2">
                   {fonts.map((lf, i) => (
-                    <th
+                    <label
                       key={lf.id}
-                      className="pb-2 pr-2 text-right"
-                      style={{ color: COLORS[i % COLORS.length] }}
+                      className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-neutral-800"
                     >
-                      {lf.familyName.slice(0, 8)}
-                    </th>
+                      <input
+                        type="checkbox"
+                        checked={lf.visible}
+                        onChange={() => toggleVisibility(lf.id)}
+                        className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-800 accent-blue-500"
+                      />
+                      <span
+                        className="h-3 w-3 shrink-0 rounded-full"
+                        style={{ backgroundColor: COLORS[i % COLORS.length] }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <span className="block truncate text-sm text-neutral-200">
+                          {lf.familyName}
+                        </span>
+                        <span className="block truncate text-xs text-neutral-500">
+                          {lf.subfamilyName}
+                        </span>
+                      </div>
+                    </label>
                   ))}
-                </tr>
-              </thead>
-              <tbody className="text-neutral-300">
-                <tr className="border-b border-neutral-800/50">
-                  <td className="py-1.5 pr-2 text-neutral-500">UPM</td>
-                  {fonts.map((lf) => (
-                    <td key={lf.id} className="py-1.5 pr-2 text-right">
-                      {lf.font.unitsPerEm}
-                    </td>
-                  ))}
-                </tr>
-                <tr className="border-b border-neutral-800/50">
-                  <td className="py-1.5 pr-2 text-neutral-500">x-height</td>
-                  {fonts.map((lf) => (
-                    <td key={lf.id} className="py-1.5 pr-2 text-right">
-                      {lf.xHeight}
-                    </td>
-                  ))}
-                </tr>
-                <tr className="border-b border-neutral-800/50">
-                  <td className="py-1.5 pr-2 text-neutral-500">Cap height</td>
-                  {fonts.map((lf) => (
-                    <td key={lf.id} className="py-1.5 pr-2 text-right">
-                      {lf.capHeight}
-                    </td>
-                  ))}
-                </tr>
-                <tr className="border-b border-neutral-800/50">
-                  <td className="py-1.5 pr-2 text-neutral-500">Ascender</td>
-                  {fonts.map((lf) => (
-                    <td key={lf.id} className="py-1.5 pr-2 text-right">
-                      {lf.font.ascender}
-                    </td>
-                  ))}
-                </tr>
-                <tr className="border-b border-neutral-800/50">
-                  <td className="py-1.5 pr-2 text-neutral-500">Descender</td>
-                  {fonts.map((lf) => (
-                    <td key={lf.id} className="py-1.5 pr-2 text-right">
-                      {lf.font.descender}
-                    </td>
-                  ))}
-                </tr>
-                <tr>
-                  <td className="py-1.5 pr-2 text-neutral-500">Glyphs</td>
-                  {fonts.map((lf) => (
-                    <td key={lf.id} className="py-1.5 pr-2 text-right">
-                      {lf.font.glyphs.length}
-                    </td>
-                  ))}
-                </tr>
-              </tbody>
-            </table>
+                </div>
+
+                {/* Metrics comparison */}
+                <div className="mt-6 border-t border-neutral-800 pt-4">
+                  <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-400">
+                    Metrics
+                  </h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-neutral-800">
+                          <th className="pb-2 pr-2 text-left text-neutral-500">Metric</th>
+                          {fonts.map((lf, i) => (
+                            <th
+                              key={lf.id}
+                              className="pb-2 pr-2 text-right"
+                              style={{ color: COLORS[i % COLORS.length] }}
+                            >
+                              {lf.familyName.slice(0, 8)}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="text-neutral-300">
+                        <tr className="border-b border-neutral-800/50">
+                          <td className="py-1.5 pr-2 text-neutral-500">UPM</td>
+                          {fonts.map((lf) => (
+                            <td key={lf.id} className="py-1.5 pr-2 text-right">
+                              {lf.font.unitsPerEm}
+                            </td>
+                          ))}
+                        </tr>
+                        <tr className="border-b border-neutral-800/50">
+                          <td className="py-1.5 pr-2 text-neutral-500">x-height</td>
+                          {fonts.map((lf) => (
+                            <td key={lf.id} className="py-1.5 pr-2 text-right">
+                              {lf.xHeight}
+                            </td>
+                          ))}
+                        </tr>
+                        <tr className="border-b border-neutral-800/50">
+                          <td className="py-1.5 pr-2 text-neutral-500">Cap height</td>
+                          {fonts.map((lf) => (
+                            <td key={lf.id} className="py-1.5 pr-2 text-right">
+                              {lf.capHeight}
+                            </td>
+                          ))}
+                        </tr>
+                        <tr className="border-b border-neutral-800/50">
+                          <td className="py-1.5 pr-2 text-neutral-500">Ascender</td>
+                          {fonts.map((lf) => (
+                            <td key={lf.id} className="py-1.5 pr-2 text-right">
+                              {lf.font.ascender}
+                            </td>
+                          ))}
+                        </tr>
+                        <tr className="border-b border-neutral-800/50">
+                          <td className="py-1.5 pr-2 text-neutral-500">Descender</td>
+                          {fonts.map((lf) => (
+                            <td key={lf.id} className="py-1.5 pr-2 text-right">
+                              {lf.font.descender}
+                            </td>
+                          ))}
+                        </tr>
+                        <tr>
+                          <td className="py-1.5 pr-2 text-neutral-500">Glyphs</td>
+                          {fonts.map((lf) => (
+                            <td key={lf.id} className="py-1.5 pr-2 text-right">
+                              {lf.font.glyphs.length}
+                            </td>
+                          ))}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
-        </div>
-      </aside>
+        </aside>
+      </div>
     </div>
   );
 }

@@ -30,6 +30,8 @@ function inferStyle(subfamilyName: string): 'normal' | 'italic' | 'oblique' {
   const lower = subfamilyName.toLowerCase();
   if (lower.includes('oblique')) return 'oblique';
   if (lower.includes('italic')) return 'italic';
+  if (/\bObl\b/.test(subfamilyName)) return 'oblique';
+  if (/\bIt\b/.test(subfamilyName)) return 'italic';
   return 'normal';
 }
 

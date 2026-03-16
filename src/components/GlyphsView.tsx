@@ -1,7 +1,29 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, Component, type ReactNode } from 'react';
 import type { Font, Glyph } from 'opentype.js';
 import type { FontData } from '../types';
 import { OTF_FEATURE_NAMES } from '../lib/otfFeatures';
+
+class GlyphsErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex h-full flex-col items-center justify-center gap-3 text-neutral-400">
+          <p className="text-lg">Failed to render glyphs</p>
+          <p className="max-w-md text-center text-sm text-neutral-500">{this.state.error.message}</p>
+          <button
+            onClick={() => this.setState({ error: null })}
+            className="rounded border border-neutral-700 px-3 py-1 text-sm transition-colors hover:bg-neutral-800"
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 interface GlyphInfo {
   index: number;
@@ -101,6 +123,7 @@ function GlyphCell({ glyph, info, cellSize, font }: {
   font: Font;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [renderFailed, setRenderFailed] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -115,35 +138,46 @@ function GlyphCell({ glyph, info, cellSize, font }: {
     canvas.style.width = `${drawSize}px`;
     canvas.style.height = `${drawSize}px`;
     ctx.scale(dpr, dpr);
-
     ctx.clearRect(0, 0, drawSize, drawSize);
 
-    const bb = glyph.getBoundingBox();
-    const gW = bb.x2 - bb.x1;
-    const gH = bb.y2 - bb.y1;
-    if (gW === 0 && gH === 0) return;
+    try {
+      const bb = glyph.getBoundingBox();
+      if (!bb || (bb.x2 - bb.x1 === 0 && bb.y2 - bb.y1 === 0)) return;
+      const gW = bb.x2 - bb.x1;
+      const gH = bb.y2 - bb.y1;
 
-    const padding = 4;
-    const availSize = drawSize - padding * 2;
-    const scale = Math.min(availSize / Math.max(gW, 1), availSize / Math.max(gH, 1));
-    const fontSize = font.unitsPerEm * scale;
+      const padding = 4;
+      const availSize = drawSize - padding * 2;
+      const scale = Math.min(availSize / Math.max(gW, 1), availSize / Math.max(gH, 1));
+      const fSize = font.unitsPerEm * scale;
 
-    const cx = padding + (availSize - gW * scale) / 2;
-    const cy = padding + (availSize - gH * scale) / 2;
-    const drawX = cx - bb.x1 * scale;
-    const drawY = cy + bb.y2 * scale;
+      const cx = padding + (availSize - gW * scale) / 2;
+      const cy = padding + (availSize - gH * scale) / 2;
+      const drawX = cx - bb.x1 * scale;
+      const drawY = cy + bb.y2 * scale;
 
-    const path = glyph.getPath(drawX, drawY, fontSize);
-    ctx.fillStyle = '#e5e5e5';
-    ctx.beginPath();
-    for (const cmd of path.commands) {
-      if (cmd.type === 'M') ctx.moveTo(cmd.x, cmd.y);
-      else if (cmd.type === 'L') ctx.lineTo(cmd.x, cmd.y);
-      else if (cmd.type === 'Q') ctx.quadraticCurveTo(cmd.x1, cmd.y1, cmd.x, cmd.y);
-      else if (cmd.type === 'C') ctx.bezierCurveTo(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.x, cmd.y);
-      else if (cmd.type === 'Z') ctx.closePath();
+      const path = glyph.getPath(drawX, drawY, fSize);
+      if (!path?.commands) return;
+
+      ctx.fillStyle = '#e5e5e5';
+      ctx.beginPath();
+      for (const cmd of path.commands) {
+        if (cmd.type === 'M') ctx.moveTo(cmd.x, cmd.y);
+        else if (cmd.type === 'L') ctx.lineTo(cmd.x, cmd.y);
+        else if (cmd.type === 'Q') ctx.quadraticCurveTo(cmd.x1, cmd.y1, cmd.x, cmd.y);
+        else if (cmd.type === 'C') ctx.bezierCurveTo(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.x, cmd.y);
+        else if (cmd.type === 'Z') ctx.closePath();
+      }
+      ctx.fill();
+      setRenderFailed(false);
+    } catch {
+      setRenderFailed(true);
+      ctx.fillStyle = '#525252';
+      ctx.font = `${drawSize * 0.3}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('?', drawSize / 2, drawSize / 2);
     }
-    ctx.fill();
   }, [glyph, cellSize, font]);
 
   const label = info.unicode != null
@@ -152,9 +186,9 @@ function GlyphCell({ glyph, info, cellSize, font }: {
 
   return (
     <div
-      className="flex flex-col items-center rounded border border-neutral-800 bg-neutral-900 transition-colors hover:border-neutral-600"
+      className={`flex flex-col items-center rounded border bg-neutral-900 transition-colors hover:border-neutral-600 ${renderFailed ? 'border-red-900/50' : 'border-neutral-800'}`}
       style={{ width: cellSize, height: cellSize + 28 }}
-      title={`${info.name}\n${label}${info.char ? ` "${info.char}"` : ''}`}
+      title={`${info.name}\n${label}${info.char ? ` "${info.char}"` : ''}${renderFailed ? '\n(render error)' : ''}`}
     >
       <canvas ref={canvasRef} className="mt-1" />
       <div className="w-full truncate px-1 text-center text-[10px] text-neutral-500" title={info.name}>
@@ -168,6 +202,14 @@ function GlyphCell({ glyph, info, cellSize, font }: {
 }
 
 export function GlyphsView({ fontData }: { fontData: FontData }) {
+  return (
+    <GlyphsErrorBoundary>
+      <GlyphsViewInner fontData={fontData} />
+    </GlyphsErrorBoundary>
+  );
+}
+
+function GlyphsViewInner({ fontData }: { fontData: FontData }) {
   const [cellSize, setCellSize] = useState(72);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
@@ -183,7 +225,8 @@ export function GlyphsView({ fontData }: { fontData: FontData }) {
         const g = font.glyphs.get(i);
         if (!g) continue;
         const unicode = (g as any).unicode ?? null;
-        const char = unicode != null ? String.fromCodePoint(unicode) : '';
+        let char = '';
+        try { if (unicode != null) char = String.fromCodePoint(unicode); } catch { /* invalid codepoint */ }
         infos.push({
           index: i,
           glyph: g,
