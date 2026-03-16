@@ -864,7 +864,7 @@ export function LibraryView() {
             ))}
           </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 xl:grid-cols-3" data-testid="list-view">
+          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4" data-testid="list-view">
             {filteredFamilies.map((family) => (
               <FamilyCard
                 key={family.familyName}
@@ -969,13 +969,13 @@ function FamilyCard({
   return (
     <div className="rounded-lg border border-neutral-800 bg-neutral-900" data-testid="family-card">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3">
+      <div className="flex items-center justify-between px-3 py-2">
         <button
           onClick={toggleCardState}
           className="min-w-0 flex-1 text-left"
           data-testid="family-header"
         >
-          <h3 className="truncate text-sm font-semibold text-white">
+          <h3 className="truncate text-xs font-semibold text-white">
             <span className="mr-2 inline-block text-neutral-600 transition-transform" style={{ transform: cardState === 'collapsed' ? 'rotate(-90deg)' : 'rotate(0)' }}>
               ▾
             </span>
@@ -1063,7 +1063,7 @@ function FamilyCard({
             {displayedFonts.map((font) => (
               <div
                 key={font.id}
-                className="group flex items-center gap-2 border-b border-neutral-800/50 px-4 py-2 last:border-b-0"
+                className="group flex items-center gap-1.5 border-b border-neutral-800/50 px-3 py-1.5 last:border-b-0"
               >
                 <input
                   type="checkbox"
@@ -1072,7 +1072,7 @@ function FamilyCard({
                   className="h-3.5 w-3.5 shrink-0 rounded border-neutral-600 bg-neutral-800 accent-blue-500"
                 />
                 <div className="min-w-0 flex-1">
-                  <span className="text-sm text-neutral-300">
+                  <span className="text-xs text-neutral-300">
                     {variantLabel(font, hasMultipleWidths)}
                   </span>
                   {cardState === 'expanded' && (

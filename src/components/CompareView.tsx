@@ -152,7 +152,8 @@ export function CompareView() {
       ? (rect.width - maxTextWidth * fitScale) / 2
       : padding;
 
-    visibleFonts.forEach((lf, i) => {
+    fonts.forEach((lf, i) => {
+      if (!lf.visible) return;
       const color = COLORS[i % COLORS.length];
       const baseScale = normalize
         ? (fontSize / lf.font.unitsPerEm) * (referenceXHeight / lf.xHeight)

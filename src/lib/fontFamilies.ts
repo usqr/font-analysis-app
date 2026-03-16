@@ -1,4 +1,15 @@
 import type { StoredFontMeta, FontFamily } from '../types';
+import {
+  WEIGHT_TOKENS,
+  STYLE_TOKENS,
+  WIDTH_TOKENS,
+  extractTrailingWidth,
+  extractTrailingType,
+  stripTrailingQualifiers,
+  computeFamilyDiff,
+} from './fontNameTokens.js';
+
+export { extractTrailingWidth };
 
 const WEIGHT_LABELS: Record<number, string> = {
   100: 'Thin',
@@ -12,47 +23,9 @@ const WEIGHT_LABELS: Record<number, string> = {
   900: 'Black',
 };
 
-const WEIGHT_TOKENS = new Set([
-  'Thin', 'Hairline', 'ExtraLight', 'Extra Light', 'UltraLight', 'Ultra Light',
-  'Light', 'Regular', 'Normal', 'Book',
-  'Medium', 'SemiBold', 'Semi Bold', 'DemiBold', 'Demi Bold',
-  'Bold', 'ExtraBold', 'Extra Bold', 'UltraBold', 'Ultra Bold',
-  'Black', 'Heavy', 'Ultra',
-  'Bld', 'Blk', 'Lgt', 'Med', 'Reg', 'Thn', 'Ult', 'Hvy', 'Smb', 'Dmb', 'Ext', 'Bk',
-  'Bol', 'Lig', 'Hea', 'Boo', 'Dem', 'Bla', 'Sem', 'Thi', 'Nor',
-]);
-const STYLE_TOKENS = new Set(['Italic', 'Oblique', 'It', 'Obl']);
-const WIDTH_TOKENS = new Set([
-  'Condensed', 'Narrow', 'Wide', 'Expanded', 'Compressed', 'SemiCondensed',
-  'Nar', 'Con', 'Wid', 'Exp', 'Com', 'Cnd',
-]);
-
-const TRAILING_WIDTH_NAMES = [
-  'Ultra Condensed', 'UltraCondensed',
-  'Extra Condensed', 'ExtraCondensed',
-  'Semi Condensed', 'SemiCondensed',
-  'Condensed',
-  'Compressed',
-  'Narrow',
-  'Semi Expanded', 'SemiExpanded',
-  'Extra Expanded', 'ExtraExpanded',
-  'Ultra Expanded', 'UltraExpanded',
-  'Expanded',
-  'Wide',
-];
-
-export function extractTrailingWidth(name: string): { baseName: string; width: string } {
-  for (const w of TRAILING_WIDTH_NAMES) {
-    if (name.endsWith(` ${w}`)) {
-      return { baseName: name.slice(0, -(w.length + 1)).trim(), width: w };
-    }
-  }
-  return { baseName: name, width: '' };
-}
-
 export function superFamilyName(font: StoredFontMeta): string {
   const name = font.preferredFamilyName ?? font.familyName;
-  return extractTrailingWidth(name).baseName;
+  return stripTrailingQualifiers(name).baseName;
 }
 
 export function weightLabel(weight: number): string {
@@ -69,29 +42,20 @@ export function displayFamilyName(font: StoredFontMeta): string {
   return superFamilyName(font);
 }
 
-function splitCamelTokens(s: string): string {
-  return s.replace(/([a-z])([A-Z])/g, '$1 $2').trim();
-}
-
-function computeFamilyDiff(familyName: string, preferredFamily: string): string {
-  const diff = familyName.replace(preferredFamily, '').trim();
-  if (diff !== familyName) return splitCamelTokens(diff);
-
-  const normFamily = familyName.replace(/\s+/g, '');
-  const normPref = preferredFamily.replace(/\s+/g, '');
-  if (normFamily.startsWith(normPref)) {
-    return splitCamelTokens(normFamily.slice(normPref.length));
-  }
-  return splitCamelTokens(diff);
-}
-
 export function widthQualifier(font: StoredFontMeta): string {
   const groupName = font.preferredFamilyName;
 
   if (groupName) {
     const { width } = extractTrailingWidth(groupName);
     if (width) return width;
+
+    const { typeName } = extractTrailingType(groupName);
+    if (typeName) return typeName;
   }
+
+  const name = font.preferredFamilyName ?? font.familyName;
+  const { typeName } = extractTrailingType(name);
+  if (typeName) return typeName;
 
   if (!groupName || groupName === font.familyName) return '';
   const diff = computeFamilyDiff(font.familyName, groupName);

@@ -6,10 +6,10 @@ A desktop-oriented web app for scanning, storing, analyzing, and comparing font 
 
 - **Font Library** — Scan local folders or download from Google Fonts. Fonts are grouped by family with width tabs, style toggles, and collapsible cards. List and grid views with live "Aa" previews.
 - **Filtering** — Category radio buttons (Serif, Sans-Serif, Monospace, Display, Script), text search, and histogram-based range filters for contrast, weight, width, and x-height.
-- **Analyze** — Per-font analysis views: stroke contrast, x-height, proportions, weight distribution, spacing, and a paginated glyph grid with OTF feature filtering. Sidebar shows OpenType features and raw metadata (name, OS/2, head, post tables).
-- **Compare** — Overlay multiple fonts on a shared canvas with normalize toggle and auto-fit text sizing. Collapsible info panel with drag-resizable width.
+- **Analyze** — Per-font analysis views: stroke contrast (with reference lines matching x-height view), x-height, proportions, weight distribution, spacing, and a paginated glyph grid with web font rendering and OTF feature filtering. Sidebar shows OpenType features and raw metadata (name, OS/2, head, post tables).
+- **Compare** — Overlay multiple fonts on a shared canvas with normalize toggle and auto-fit text sizing. Consistent color assignment across font toggles. Collapsible info panel with drag-resizable width.
 - **Format Support** — TTF, OTF, WOFF, WOFF2 (decompressed via wawoff2).
-- **Smart Naming** — Handles URW-style abbreviated names, typographic subfamily (name ID 17), super-family grouping across width variants, and fallback naming from filenames.
+- **Smart Naming** — Handles URW-style abbreviated names (including fonts without preferredFamilyName), typographic subfamily (name ID 17), super-family grouping across width and type variants (e.g., Alfabet types), and fallback naming from filenames.
 - **Deduplication** — Variant-key dedup with format priority (OTF > TTF > WOFF > WOFF2), source-aware (local vs Google fonts coexist).
 
 ## Tech Stack

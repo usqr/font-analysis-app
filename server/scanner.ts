@@ -58,6 +58,25 @@ function inferWeight(font: opentype.Font, subfamilyName: string): number {
   return 400;
 }
 
+function inferWeightFromName(subfamilyName: string): number {
+  const lower = subfamilyName.toLowerCase();
+  const map: [string, number][] = [
+    ['extra bold', 800], ['extrabold', 800], ['ultra bold', 800], ['ultrabold', 800],
+    ['extra light', 200], ['extralight', 200], ['ultra light', 200], ['ultralight', 200],
+    ['semi bold', 600], ['semibold', 600], ['demi bold', 600], ['demibold', 600],
+    ['hairline', 100], ['thin', 100],
+    ['light', 300],
+    ['medium', 500],
+    ['bold', 700],
+    ['black', 900], ['heavy', 900],
+    ['book', 400],
+  ];
+  for (const [key, weight] of map) {
+    if (lower.includes(key)) return weight;
+  }
+  return 400;
+}
+
 function familyNameFromFile(filePath: string): { family: string; subfamily: string | null } {
   const base = path.basename(filePath, path.extname(filePath));
   const cleaned = base.replace(/-webfont$/i, '');
@@ -71,56 +90,37 @@ function isUsableName(name: string | undefined): name is string {
   return !!name && name.length >= 2 && name !== 'Unknown' && /[a-zA-Z]{2,}/.test(name);
 }
 
-const WEIGHT_ABBREVS: Record<string, string> = {
-  Bld: 'Bold', Blk: 'Black', Lgt: 'Light', Med: 'Medium',
-  Reg: 'Regular', Thn: 'Thin', Ult: 'Ultra',
-  Hvy: 'Heavy', Smb: 'SemiBold', Dmb: 'DemiBold',
-  Ext: 'Extra', Bk: 'Book',
-  Bol: 'Bold', Lig: 'Light', Hea: 'Heavy', Boo: 'Book',
-  Dem: 'DemiBold', Bla: 'Black', Sem: 'SemiBold', Thi: 'Thin',
-  Nor: 'Regular',
-  Bold: 'Bold', Black: 'Black', Light: 'Light', Medium: 'Medium',
-  Regular: 'Regular', Thin: 'Thin', Heavy: 'Heavy',
-  SemiBold: 'SemiBold', DemiBold: 'DemiBold', Book: 'Book',
-  ExtraLight: 'ExtraLight', UltraLight: 'UltraLight',
-  ExtraBold: 'ExtraBold', UltraBold: 'UltraBold',
-  Hairline: 'Hairline',
-};
-const WIDTH_ABBREVS: Record<string, string> = {
-  Nar: 'Narrow', Con: 'Condensed', Wid: 'Wide',
-  Exp: 'Expanded', Com: 'Compressed', Cnd: 'Condensed',
-  Narrow: 'Narrow', Condensed: 'Condensed', Wide: 'Wide',
-  Expanded: 'Expanded', Compressed: 'Compressed',
-  SemiCondensed: 'SemiCondensed', SemiExpanded: 'SemiExpanded',
-};
-const STYLE_ABBREVS: Record<string, 'italic' | 'oblique'> = {
-  It: 'italic', Obl: 'oblique',
-  Italic: 'italic', Oblique: 'oblique',
-};
-
-function splitCamelTokens(s: string): string {
-  return s.replace(/([a-z])([A-Z])/g, '$1 $2').trim();
-}
-
-function computeFamilyDiff(familyName: string, preferredFamily: string): string {
-  const diff = familyName.replace(preferredFamily, '').trim();
-  if (diff !== familyName) return splitCamelTokens(diff);
-
-  const normFamily = familyName.replace(/\s+/g, '');
-  const normPref = preferredFamily.replace(/\s+/g, '');
-  if (normFamily.startsWith(normPref)) {
-    return splitCamelTokens(normFamily.slice(normPref.length));
-  }
-  return splitCamelTokens(diff);
-}
+import {
+  WEIGHT_ABBREVS,
+  WIDTH_ABBREVS,
+  STYLE_ABBREVS,
+  splitCamelTokens,
+  computeFamilyDiff,
+} from '../src/lib/fontNameTokens.js';
 
 function parseAbbreviatedSubfamily(diff: string): { subfamilyName: string; style: 'normal' | 'italic' | 'oblique'; widthRemainder: string } {
-  const tokens = diff.split(/\s+/);
+  const tokens = diff.split(/\s+/).filter(t => t.length > 0);
   const weightParts: string[] = [];
   let style: 'normal' | 'italic' | 'oblique' = 'normal';
   const remainderParts: string[] = [];
 
-  for (const tok of tokens) {
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    const next = tokens[i + 1];
+
+    if (tok === 'Ext' || tok === 'Extra' || tok === 'Ultra' || tok === 'Semi') {
+      if (next && WIDTH_ABBREVS[next]) {
+        remainderParts.push(`${WEIGHT_ABBREVS[tok] ?? tok} ${WIDTH_ABBREVS[next]}`);
+        i++;
+        continue;
+      }
+      if (next && WEIGHT_ABBREVS[next]) {
+        weightParts.push(`${WEIGHT_ABBREVS[tok] ?? tok} ${WEIGHT_ABBREVS[next]}`);
+        i++;
+        continue;
+      }
+    }
+
     if (STYLE_ABBREVS[tok]) {
       style = STYLE_ABBREVS[tok];
     } else if (WEIGHT_ABBREVS[tok]) {
@@ -140,6 +140,40 @@ function parseAbbreviatedSubfamily(diff: string): { subfamilyName: string; style
     subfamilyName: parts.length > 0 ? parts.join(' ') : 'Regular',
     style,
     widthRemainder: remainderParts.join(' '),
+  };
+}
+
+/**
+ * For fonts without preferredFamilyName, try to infer one by stripping
+ * known weight/style/width abbreviation tokens from the end of the
+ * camelCase-split familyName. Handles URW-style names like "BodoniURWExtBol".
+ * Also normalizes pure concatenated names like "BodoniURW" → "Bodoni URW".
+ */
+function inferPreferredFamily(familyName: string): { preferredFamily: string; diff: string } | null {
+  const expanded = splitCamelTokens(familyName);
+  if (expanded === familyName) return null;
+
+  const tokens = expanded.split(/\s+/);
+  if (tokens.length < 2) return null;
+
+  let lastBase = tokens.length;
+  for (let i = tokens.length - 1; i >= 1; i--) {
+    const tok = tokens[i];
+    if (WEIGHT_ABBREVS[tok] || WIDTH_ABBREVS[tok] || STYLE_ABBREVS[tok]) {
+      lastBase = i;
+    } else {
+      break;
+    }
+  }
+
+  const baseParts = tokens.slice(0, lastBase);
+  const diffParts = tokens.slice(lastBase);
+
+  if (baseParts.length === 0) return null;
+
+  return {
+    preferredFamily: baseParts.join(' '),
+    diff: diffParts.join(' '),
   };
 }
 
@@ -395,7 +429,7 @@ export async function scanFont(filePath: string, source: FontSource = 'local'): 
     const font = opentype.parse(arrayBuffer as ArrayBuffer);
     const stat = fs.statSync(filePath);
     let subfamilyName = font.names.fontSubfamily?.en ?? 'Regular';
-    const preferredFamily =
+    let preferredFamily =
       font.names.preferredFamily?.en ??
       (font.names as any).typographicFamily?.en ??
       undefined;
@@ -434,6 +468,28 @@ export async function scanFont(filePath: string, source: FontSource = 'local'): 
       }
     }
 
+    let inferredFromName = false;
+    if (!preferredFamily) {
+      const inferred = inferPreferredFamily(familyName);
+      if (inferred) {
+        const parsed = parseAbbreviatedSubfamily(inferred.diff);
+        preferredFamily = parsed.widthRemainder
+          ? `${inferred.preferredFamily} ${parsed.widthRemainder}`
+          : inferred.preferredFamily;
+        if (/^(Regular|Normal)$/i.test(subfamilyName) && (parsed.subfamilyName !== 'Regular' || parsed.style !== 'normal')) {
+          subfamilyName = parsed.subfamilyName;
+          style = parsed.style;
+          inferredFromName = true;
+        }
+      }
+    }
+
+    let weight = inferWeight(font, subfamilyName);
+    if (inferredFromName && weight === 400) {
+      const fallback = inferWeightFromName(subfamilyName);
+      if (fallback !== 400) weight = fallback;
+    }
+
     const metrics = computeFontMetrics(font) ?? undefined;
     const category = classifyFont(font, metrics);
 
@@ -445,7 +501,7 @@ export async function scanFont(filePath: string, source: FontSource = 'local'): 
         familyName,
         ...(preferredFamily ? { preferredFamilyName: preferredFamily } : {}),
         subfamilyName,
-        weight: inferWeight(font, subfamilyName),
+        weight,
         style,
         format: isWoff2 ? 'ttf' : ext.slice(1),
         fileSize: stat.size,

@@ -1,7 +1,8 @@
-import { useState, useMemo, useRef, useEffect, useCallback, Component, type ReactNode } from 'react';
+import { useState, useMemo, useCallback, useEffect, Component, type ReactNode } from 'react';
 import type { Font, Glyph } from 'opentype.js';
 import type { FontData } from '../types';
 import { OTF_FEATURE_NAMES } from '../lib/otfFeatures';
+import { fetchFontData } from '../lib/api';
 
 class GlyphsErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -77,7 +78,6 @@ function extractFeatureSubstitutions(font: Font): Map<string, FeatureSubstitutio
             }
           }
         } else if (lookup.lookupType === 4) {
-          // Ligature - show as a substitution from first glyph
           const ligSets: any[] = sub.ligatureSets ?? [];
           for (let i = 0; i < coveredGlyphs.length; i++) {
             const ligs = ligSets[i];
@@ -116,104 +116,104 @@ function getCoverageGlyphs(coverage: any): number[] {
 
 const GLYPHS_PER_PAGE = 200;
 
-function GlyphCell({ glyph, info, cellSize, font }: {
-  glyph: Glyph;
-  info: GlyphInfo;
-  cellSize: number;
-  font: Font;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [renderFailed, setRenderFailed] = useState(false);
+const fontFaceCache = new Map<string, string>();
+
+function useGlyphFontFace(fontId: string): string | null {
+  const [fontFamily, setFontFamily] = useState<string | null>(
+    fontFaceCache.has(fontId) ? fontFaceCache.get(fontId)! : null,
+  );
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const drawSize = cellSize - 24;
-    canvas.width = drawSize * dpr;
-    canvas.height = drawSize * dpr;
-    canvas.style.width = `${drawSize}px`;
-    canvas.style.height = `${drawSize}px`;
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, drawSize, drawSize);
-
-    try {
-      const bb = glyph.getBoundingBox();
-      if (!bb || (bb.x2 - bb.x1 === 0 && bb.y2 - bb.y1 === 0)) return;
-      const gW = bb.x2 - bb.x1;
-      const gH = bb.y2 - bb.y1;
-
-      const padding = 4;
-      const availSize = drawSize - padding * 2;
-      const scale = Math.min(availSize / Math.max(gW, 1), availSize / Math.max(gH, 1));
-      const fSize = font.unitsPerEm * scale;
-
-      const cx = padding + (availSize - gW * scale) / 2;
-      const cy = padding + (availSize - gH * scale) / 2;
-      const drawX = cx - bb.x1 * scale;
-      const drawY = cy + bb.y2 * scale;
-
-      const path = glyph.getPath(drawX, drawY, fSize);
-      if (!path?.commands) return;
-
-      ctx.fillStyle = '#e5e5e5';
-      ctx.beginPath();
-      for (const cmd of path.commands) {
-        if (cmd.type === 'M') ctx.moveTo(cmd.x, cmd.y);
-        else if (cmd.type === 'L') ctx.lineTo(cmd.x, cmd.y);
-        else if (cmd.type === 'Q') ctx.quadraticCurveTo(cmd.x1, cmd.y1, cmd.x, cmd.y);
-        else if (cmd.type === 'C') ctx.bezierCurveTo(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.x, cmd.y);
-        else if (cmd.type === 'Z') ctx.closePath();
-      }
-      ctx.fill();
-      setRenderFailed(false);
-    } catch {
-      setRenderFailed(true);
-      ctx.fillStyle = '#525252';
-      ctx.font = `${drawSize * 0.3}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('?', drawSize / 2, drawSize / 2);
+    if (fontFaceCache.has(fontId)) {
+      setFontFamily(fontFaceCache.get(fontId)!);
+      return;
     }
-  }, [glyph, cellSize, font]);
 
+    let cancelled = false;
+    fetchFontData(fontId).then((data) => {
+      if (cancelled) return;
+      const cssName = `__glyph_${fontId.slice(0, 8)}`;
+      const mimeMap: Record<string, string> = {
+        otf: 'font/opentype', ttf: 'font/truetype',
+        woff: 'font/woff', woff2: 'font/woff2',
+      };
+      const mime = mimeMap[data.format] ?? 'font/opentype';
+      const style = document.createElement('style');
+      style.textContent = `@font-face { font-family: '${cssName}'; src: url('data:${mime};base64,${data.base64Data}'); font-display: block; }`;
+      document.head.appendChild(style);
+      fontFaceCache.set(fontId, cssName);
+      setFontFamily(cssName);
+    }).catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [fontId]);
+
+  return fontFamily;
+}
+
+function GlyphCell({ info, cellSize, fontFamily }: {
+  info: GlyphInfo;
+  cellSize: number;
+  fontFamily: string | null;
+}) {
   const label = info.unicode != null
     ? `U+${info.unicode.toString(16).toUpperCase().padStart(4, '0')}`
     : `#${info.index}`;
 
+  const glyphFontSize = cellSize * 0.55;
+
   return (
     <div
-      className={`flex flex-col items-center rounded border bg-neutral-900 transition-colors hover:border-neutral-600 ${renderFailed ? 'border-red-900/50' : 'border-neutral-800'}`}
+      className="flex flex-col items-center rounded border border-neutral-800 bg-neutral-900 transition-colors hover:border-neutral-600"
       style={{ width: cellSize, height: cellSize + 28 }}
-      title={`${info.name}\n${label}${info.char ? ` "${info.char}"` : ''}${renderFailed ? '\n(render error)' : ''}`}
+      title={`${info.name}\n${label}${info.char ? ` "${info.char}"` : ''}`}
     >
-      <canvas ref={canvasRef} className="mt-1" />
+      <div
+        className="flex items-center justify-center"
+        style={{ width: cellSize - 4, height: cellSize - 4 }}
+      >
+        {info.char && fontFamily ? (
+          <span
+            className="select-none text-neutral-200"
+            style={{
+              fontFamily: `'${fontFamily}'`,
+              fontSize: `${glyphFontSize}px`,
+              lineHeight: 1,
+            }}
+          >
+            {info.char}
+          </span>
+        ) : (
+          <span className="text-neutral-600" style={{ fontSize: `${glyphFontSize * 0.5}px` }}>
+            ?
+          </span>
+        )}
+      </div>
       <div className="w-full truncate px-1 text-center text-[10px] text-neutral-500" title={info.name}>
         {label}
       </div>
       <div className="w-full truncate px-1 text-center text-[9px] text-neutral-600" title={info.name}>
-        {info.name.length > 12 ? info.name.slice(0, 11) + '…' : info.name}
+        {info.name.length > 12 ? info.name.slice(0, 11) + '\u2026' : info.name}
       </div>
     </div>
   );
 }
 
-export function GlyphsView({ fontData }: { fontData: FontData }) {
+export function GlyphsView({ fontData, fontId }: { fontData: FontData; fontId: string }) {
   return (
     <GlyphsErrorBoundary>
-      <GlyphsViewInner fontData={fontData} />
+      <GlyphsViewInner fontData={fontData} fontId={fontId} />
     </GlyphsErrorBoundary>
   );
 }
 
-function GlyphsViewInner({ fontData }: { fontData: FontData }) {
+function GlyphsViewInner({ fontData, fontId }: { fontData: FontData; fontId: string }) {
   const [cellSize, setCellSize] = useState(72);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
   const [selectedFeature, setSelectedFeature] = useState<string | null>(null);
+
+  const fontFamily = useGlyphFontFace(fontId);
 
   const allGlyphs = useMemo<GlyphInfo[]>(() => {
     try {
@@ -342,10 +342,9 @@ function GlyphsViewInner({ fontData }: { fontData: FontData }) {
           {pageGlyphs.map((info) => (
             <GlyphCell
               key={info.index}
-              glyph={info.glyph}
               info={info}
               cellSize={cellSize}
-              font={fontData.font}
+              fontFamily={fontFamily}
             />
           ))}
         </div>

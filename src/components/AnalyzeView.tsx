@@ -264,7 +264,7 @@ export function AnalyzeView() {
     }
   }, [fontData, activeTab]);
 
-  const summaryStats = useMemo(() => {
+  const summaryStats = useMemo<{ label: string; value: string }[]>(() => {
     if (!analysis) return [];
     switch (activeTab) {
       case 'contrast': {
@@ -319,6 +319,8 @@ export function AnalyzeView() {
           { label: 'Avg char', value: `${analysis.spacing.avgCharWidth.toFixed(0)}u` },
           { label: 'Characters', value: String(analysis.spacing.charCount) },
         ];
+      default:
+        return [];
     }
   }, [analysis, activeTab]);
 
@@ -532,7 +534,7 @@ export function AnalyzeView() {
                 />
               )}
               {activeTab === 'glyphs' && (
-                <GlyphsView fontData={fontData} />
+                <GlyphsView fontData={fontData} fontId={fontId!} />
               )}
             </div>
           )}
