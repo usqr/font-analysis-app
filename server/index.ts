@@ -7,6 +7,7 @@ import * as opentype from 'opentype.js';
 import {
   readDatabase, writeDatabase, mergeFonts, deduplicateFonts,
   writeFontData, readFontData, deleteFontData, clearAllFontData,
+  readFontPaths, writeFontPaths,
 } from './database.js';
 import { scanFolder, scanFont, walkDir, computeFontMetrics, classifyFont } from './scanner.js';
 import { listGoogleFonts, downloadGoogleFonts } from './googleFonts.js';
@@ -326,17 +327,29 @@ app.put('/api/fonts/:id/refresh', async (req, res) => {
   res.json(result.meta);
 });
 
-// Toggle starred status on a font
-app.put('/api/fonts/:id/star', (req, res) => {
-  const db = readDatabase();
-  const font = db.fonts.find((f) => f.id === req.params.id);
-  if (!font) {
-    res.status(404).json({ error: 'Font not found' });
+// Toggle starred status on a font family
+app.put('/api/starred-families', (req, res) => {
+  const { key } = req.body;
+  if (!key || typeof key !== 'string') {
+    res.status(400).json({ error: 'key is required (source:familyName)' });
     return;
   }
-  font.starred = !font.starred;
+  const db = readDatabase();
+  const set = new Set(db.starredFamilies ?? []);
+  if (set.has(key)) {
+    set.delete(key);
+  } else {
+    set.add(key);
+  }
+  db.starredFamilies = Array.from(set);
   writeDatabase(db);
-  res.json({ starred: font.starred });
+  res.json({ starred: set.has(key), starredFamilies: db.starredFamilies });
+});
+
+// Get all starred family keys
+app.get('/api/starred-families', (_req, res) => {
+  const db = readDatabase();
+  res.json({ starredFamilies: db.starredFamilies ?? [] });
 });
 
 // Delete a font from the database
@@ -397,6 +410,38 @@ app.post('/api/google-fonts/download', async (req, res) => {
   }
 
   res.end();
+});
+
+// --- Saved font folder paths ---
+
+app.get('/api/font-paths', (_req, res) => {
+  res.json({ paths: readFontPaths() });
+});
+
+app.post('/api/font-paths', (req, res) => {
+  const { path: newPath } = req.body;
+  if (!newPath || typeof newPath !== 'string') {
+    res.status(400).json({ error: 'path is required' });
+    return;
+  }
+  const resolved = path.resolve(newPath);
+  const paths = readFontPaths();
+  if (!paths.includes(resolved)) {
+    paths.push(resolved);
+    writeFontPaths(paths);
+  }
+  res.json({ paths });
+});
+
+app.delete('/api/font-paths', (req, res) => {
+  const { path: removePath } = req.body;
+  if (!removePath || typeof removePath !== 'string') {
+    res.status(400).json({ error: 'path is required' });
+    return;
+  }
+  const paths = readFontPaths().filter((p) => p !== removePath);
+  writeFontPaths(paths);
+  res.json({ paths });
 });
 
 app.listen(PORT, () => {

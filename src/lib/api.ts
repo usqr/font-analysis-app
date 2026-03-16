@@ -118,9 +118,39 @@ export async function deleteFont(id: string): Promise<void> {
   await json(res);
 }
 
-export async function toggleStar(id: string): Promise<{ starred: boolean }> {
-  const res = await fetch(`${BASE}/fonts/${id}/star`, { method: 'PUT' });
-  return json<{ starred: boolean }>(res);
+export async function toggleStarFamily(key: string): Promise<{ starred: boolean; starredFamilies: string[] }> {
+  const res = await fetch(`${BASE}/starred-families`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  });
+  return json<{ starred: boolean; starredFamilies: string[] }>(res);
+}
+
+export async function fetchFontPaths(): Promise<string[]> {
+  const res = await fetch(`${BASE}/font-paths`);
+  const data = await json<{ paths: string[] }>(res);
+  return data.paths;
+}
+
+export async function addFontPath(path: string): Promise<string[]> {
+  const res = await fetch(`${BASE}/font-paths`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  const data = await json<{ paths: string[] }>(res);
+  return data.paths;
+}
+
+export async function removeFontPath(path: string): Promise<string[]> {
+  const res = await fetch(`${BASE}/font-paths`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  const data = await json<{ paths: string[] }>(res);
+  return data.paths;
 }
 
 export async function convertWoff2(base64Data: string): Promise<string> {

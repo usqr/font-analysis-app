@@ -15,8 +15,8 @@ import { analyzeProportions } from '../analysis/proportions';
 import { analyzeWeight } from '../analysis/weight';
 import { analyzeSpacing } from '../analysis/spacing';
 import { exportAnalysisJSON, exportCanvasAsAvif } from '../lib/exportUtils';
-import { fetchFontData, fetchDatabase, toggleStar } from '../lib/api';
-import { groupByWidth, widthQualifier, weightLabel, superFamilyName } from '../lib/fontFamilies';
+import { fetchFontData, fetchDatabase, toggleStarFamily } from '../lib/api';
+import { groupByWidth, widthQualifier, weightLabel, superFamilyName, familyKey } from '../lib/fontFamilies';
 import { extractOTFFeatures, OTF_FEATURE_NAMES } from '../lib/otfFeatures';
 import type { StoredFontMeta } from '../types';
 
@@ -145,6 +145,8 @@ export function AnalyzeView() {
   const [otfFeatures, setOtfFeatures] = useState<string[]>([]);
   const [rawMeta, setRawMeta] = useState<RawMetaSection[]>([]);
   const [showRawMeta, setShowRawMeta] = useState(false);
+  const [familyStarred, setFamilyStarred] = useState(false);
+  const [familyStarKey, setFamilyStarKey] = useState('');
 
   const runAnalysis = useCallback((data: FontData) => {
     setFontData(data);
@@ -216,6 +218,9 @@ export function AnalyzeView() {
       const currentSource = current.source ?? 'local';
       const members = db.fonts.filter((f) => superFamilyName(f) === baseKey && (f.source ?? 'local') === currentSource);
       setFamilyMembers(members);
+      const fKey = familyKey(currentSource, baseKey);
+      setFamilyStarKey(fKey);
+      setFamilyStarred((db.starredFamilies ?? []).includes(fKey));
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [fontId]);
@@ -373,15 +378,15 @@ export function AnalyzeView() {
                   <>
                     <button
                       onClick={async () => {
-                        setCurrentMeta((prev) => prev ? { ...prev, starred: !prev.starred } : prev);
-                        try { await toggleStar(currentMeta.id); } catch {
-                          setCurrentMeta((prev) => prev ? { ...prev, starred: !prev.starred } : prev);
+                        setFamilyStarred((v) => !v);
+                        try { await toggleStarFamily(familyStarKey); } catch {
+                          setFamilyStarred((v) => !v);
                         }
                       }}
                       className="text-lg leading-none transition-colors"
-                      title={currentMeta.starred ? 'Unstar' : 'Star'}
+                      title={familyStarred ? 'Unstar family' : 'Star family'}
                     >
-                      {currentMeta.starred
+                      {familyStarred
                         ? <span className="text-amber-400">&#9733;</span>
                         : <span className="text-neutral-600 hover:text-amber-400/60">&#9734;</span>}
                     </button>

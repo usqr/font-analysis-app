@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { StoredFontMeta, FontFamily, FontCategory } from '../types';
 import type { ScanEvent, ScanProgressUpdate } from '../lib/api';
-import { fetchDatabase, scanFolderStream, pickFolder, deleteFont, refreshFont, updateFontPath, clearDatabase, deduplicateDatabase, computeMetrics, downloadGoogleFonts as downloadGFonts, toggleStar } from '../lib/api';
+import { fetchDatabase, scanFolderStream, pickFolder, deleteFont, refreshFont, updateFontPath, clearDatabase, deduplicateDatabase, computeMetrics, downloadGoogleFonts as downloadGFonts, toggleStarFamily, fetchFontPaths, addFontPath, removeFontPath } from '../lib/api';
 import type { GoogleDownloadEvent } from '../lib/api';
-import { groupByFamily, variantLabel, groupByWidth, type WidthStyleGroup } from '../lib/fontFamilies';
+import { groupByFamily, variantLabel, groupByWidth, familyKey, type WidthStyleGroup } from '../lib/fontFamilies';
 import { useFontFace } from '../lib/useFontFace';
 import { HistogramFilter } from './HistogramFilter';
 
@@ -61,13 +61,19 @@ export function LibraryView() {
   const [xHeightRange, setXHeightRange] = useState<[number, number]>([0, 1]);
   const [metricsReady, setMetricsReady] = useState(false);
   const [showStarredOnly, setShowStarredOnly] = useState(false);
+  const [starredSet, setStarredSet] = useState<Set<string>>(new Set());
+  const starredRef = useRef(starredSet);
+  starredRef.current = starredSet;
+  const [savedPaths, setSavedPaths] = useState<string[]>([]);
 
   const loadDatabase = useCallback(async () => {
     try {
       setLoading(true);
       const db = await fetchDatabase();
+      const starred = new Set(db.starredFamilies ?? []);
+      setStarredSet(starred);
       setAllFonts(db.fonts);
-      setFamilies(groupByFamily(db.fonts));
+      setFamilies(groupByFamily(db.fonts, starred));
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -77,6 +83,7 @@ export function LibraryView() {
 
   useEffect(() => {
     loadDatabase();
+    fetchFontPaths().then(setSavedPaths).catch(() => {});
   }, [loadDatabase]);
 
   useEffect(() => {
@@ -159,7 +166,7 @@ export function LibraryView() {
       await deleteFont(id);
       setAllFonts((prev) => {
         const next = prev.filter((f) => f.id !== id);
-        setFamilies(groupByFamily(next));
+        setFamilies(groupByFamily(next, starredRef.current));
         return next;
       });
       setSelected((prev) => {
@@ -201,7 +208,7 @@ export function LibraryView() {
       const updated = await refreshFont(id);
       setAllFonts((prev) => {
         const next = prev.map((f) => (f.id === id ? updated : f));
-        setFamilies(groupByFamily(next));
+        setFamilies(groupByFamily(next, starredRef.current));
         return next;
       });
     } catch (e: any) {
@@ -229,20 +236,23 @@ export function LibraryView() {
     });
   }, []);
 
-  const handleToggleStar = useCallback(async (id: string) => {
-    setAllFonts((prev) => {
-      const next = prev.map((f) => (f.id === id ? { ...f, starred: !f.starred } : f));
-      setFamilies(groupByFamily(next));
-      return next;
-    });
+  const handleToggleStarFamily = useCallback(async (fam: FontFamily) => {
+    const key = familyKey(fam.source ?? 'local', fam.familyName);
+    const newSet = new Set(starredRef.current);
+    if (newSet.has(key)) newSet.delete(key); else newSet.add(key);
+    setStarredSet(newSet);
+    setFamilies((prev) => prev.map((f) =>
+      f.familyName === fam.familyName && f.source === fam.source ? { ...f, starred: newSet.has(key) } : f,
+    ));
     try {
-      await toggleStar(id);
+      await toggleStarFamily(key);
     } catch {
-      setAllFonts((prev) => {
-        const next = prev.map((f) => (f.id === id ? { ...f, starred: !f.starred } : f));
-        setFamilies(groupByFamily(next));
-        return next;
-      });
+      const revert = new Set(starredRef.current);
+      if (revert.has(key)) revert.delete(key); else revert.add(key);
+      setStarredSet(revert);
+      setFamilies((prev) => prev.map((f) =>
+        f.familyName === fam.familyName && f.source === fam.source ? { ...f, starred: revert.has(key) } : f,
+      ));
     }
   }, []);
 
@@ -287,7 +297,7 @@ export function LibraryView() {
   const searchAndCatFiltered = useMemo(() => {
     let result = families;
     if (showStarredOnly) {
-      result = result.filter((f) => f.fonts.some((v) => v.starred));
+      result = result.filter((f) => f.starred);
     }
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -695,6 +705,47 @@ export function LibraryView() {
             </button>
           </div>
 
+          {/* Saved font paths */}
+          {savedPaths.length > 0 && !scanning && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-neutral-500">Saved:</span>
+              {savedPaths.map((p) => (
+                <span key={p} className="flex items-center gap-1 rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
+                  <button
+                    onClick={() => setScanPath(p)}
+                    className="max-w-48 truncate hover:text-white"
+                    title={p}
+                  >
+                    {p.split('/').pop() || p}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const updated = await removeFontPath(p);
+                      setSavedPaths(updated);
+                    }}
+                    className="text-neutral-600 hover:text-red-400"
+                    title="Remove saved path"
+                  >
+                    &times;
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {scanPath.trim() && !scanning && !savedPaths.includes(scanPath.trim()) && (
+            <div className="mt-1.5">
+              <button
+                onClick={async () => {
+                  const updated = await addFontPath(scanPath.trim());
+                  setSavedPaths(updated);
+                }}
+                className="text-xs text-neutral-500 hover:text-blue-400"
+              >
+                + Save this path
+              </button>
+            </div>
+          )}
+
           {scanProgress && (
             <div className="mt-3 space-y-2">
               <div className="flex items-center gap-3">
@@ -894,7 +945,7 @@ export function LibraryView() {
                 family={family}
                 selected={selected}
                 onAnalyze={(id) => navigate(`/analyze/${id}`)}
-                onToggleStar={handleToggleStar}
+                onToggleStar={handleToggleStarFamily}
                 onToggleSelect={toggleSelect}
               />
             ))}
@@ -907,7 +958,7 @@ export function LibraryView() {
                 family={family}
                 selected={selected}
                 onToggleSelect={toggleSelect}
-                onToggleStar={handleToggleStar}
+                onToggleStar={handleToggleStarFamily}
                 onAnalyze={(id) => navigate(`/analyze/${id}`)}
                 onDelete={handleDelete}
                 onRefresh={handleRefresh}
@@ -1038,7 +1089,7 @@ interface FamilyCardProps {
   family: FontFamily;
   selected: Set<string>;
   onToggleSelect: (id: string) => void;
-  onToggleStar: (id: string) => void;
+  onToggleStar: (family: FontFamily) => void;
   onAnalyze: (id: string) => void;
   onDelete: (id: string) => void;
   onRefresh: (id: string) => void;
@@ -1105,6 +1156,15 @@ function FamilyCard({
           <p className="ml-5 text-xs text-neutral-500">
             {family.fonts.length} variant{family.fonts.length !== 1 ? 's' : ''}
           </p>
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleStar(family); }}
+          className="shrink-0 text-sm leading-none transition-colors"
+          title={family.starred ? 'Unstar family' : 'Star family'}
+        >
+          {family.starred
+            ? <span className="text-amber-400">&#9733;</span>
+            : <span className="text-neutral-700 hover:text-amber-400/60">&#9734;</span>}
         </button>
         <SourceBadge source={family.fonts[0]?.source} />
         {cardState !== 'collapsed' && (
@@ -1192,15 +1252,6 @@ function FamilyCard({
                   onChange={() => onToggleSelect(font.id)}
                   className="h-3.5 w-3.5 shrink-0 rounded border-neutral-600 bg-neutral-800 accent-blue-500"
                 />
-                <button
-                  onClick={(e) => { e.stopPropagation(); onToggleStar(font.id); }}
-                  className="shrink-0 text-sm leading-none transition-colors"
-                  title={font.starred ? 'Unstar' : 'Star'}
-                >
-                  {font.starred
-                    ? <span className="text-amber-400">&#9733;</span>
-                    : <span className="text-neutral-700 hover:text-amber-400/60">&#9734;</span>}
-                </button>
                 <div className="min-w-0 flex-1">
                   <span className="block truncate text-xs text-neutral-300">
                     {variantLabel(font, hasMultipleWidths)}
@@ -1266,7 +1317,7 @@ interface GridFamilyCardProps {
   family: FontFamily;
   selected: Set<string>;
   onAnalyze: (id: string) => void;
-  onToggleStar: (id: string) => void;
+  onToggleStar: (family: FontFamily) => void;
   onToggleSelect: (id: string) => void;
 }
 
@@ -1298,11 +1349,11 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
     >
       <div className="absolute left-2 top-2">
         <button
-          onClick={(e) => { e.stopPropagation(); onToggleStar(previewFont.id); }}
+          onClick={(e) => { e.stopPropagation(); onToggleStar(family); }}
           className="text-base leading-none transition-colors"
-          title={previewFont.starred ? 'Unstar' : 'Star'}
+          title={family.starred ? 'Unstar family' : 'Star family'}
         >
-          {previewFont.starred
+          {family.starred
             ? <span className="text-amber-400">&#9733;</span>
             : <span className="text-neutral-700 opacity-0 transition-opacity hover:text-amber-400/60 group-hover:opacity-100">&#9734;</span>}
         </button>

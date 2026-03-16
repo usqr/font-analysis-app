@@ -31,12 +31,12 @@ export interface StoredFont {
   metrics?: FontMetrics;
   category?: FontCategory;
   source?: FontSource;
-  starred?: boolean;
 }
 
 export interface FontDatabase {
   version: number;
   fonts: StoredFont[];
+  starredFamilies?: string[];
 }
 
 const DEFAULT_DB: FontDatabase = { version: 1, fonts: [] };
@@ -165,4 +165,26 @@ export function mergeFonts(existing: StoredFont[], incoming: StoredFont[]): Merg
   }
 
   return { fonts: kept, discardedIds };
+}
+
+// --- Font folder paths (non-committed local config) ---
+
+function fontPathsFile(): string {
+  return path.resolve(path.dirname(dbPath), 'font-paths.json');
+}
+
+export function readFontPaths(): string[] {
+  const file = fontPathsFile();
+  if (!fs.existsSync(file)) return [];
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    return Array.isArray(raw.paths) ? raw.paths : [];
+  } catch {
+    return [];
+  }
+}
+
+export function writeFontPaths(paths: string[]): void {
+  const file = fontPathsFile();
+  fs.writeFileSync(file, JSON.stringify({ paths }, null, 2), 'utf-8');
 }

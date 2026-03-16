@@ -117,7 +117,6 @@ export interface StoredFontMeta {
   metrics?: FontMetrics;
   category?: FontCategory;
   source?: FontSource;
-  starred?: boolean;
 }
 
 export interface StoredFontData {
@@ -132,11 +131,13 @@ export interface FontFamily {
   familyName: string;
   fonts: StoredFontMeta[];
   source?: FontSource;
+  starred?: boolean;
 }
 
 export interface FontDatabaseResponse {
   version: number;
   fonts: StoredFontMeta[];
+  starredFamilies?: string[];
 }
 
 export interface ScanResult {

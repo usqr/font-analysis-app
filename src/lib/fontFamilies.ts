@@ -1,4 +1,4 @@
-import type { StoredFontMeta, FontFamily } from '../types';
+import type { StoredFontMeta, FontFamily, FontSource } from '../types';
 import {
   WEIGHT_TOKENS,
   STYLE_TOKENS,
@@ -110,7 +110,11 @@ export function groupByWidth(fonts: StoredFontMeta[]): Map<string, WidthStyleGro
   return map;
 }
 
-export function groupByFamily(fonts: StoredFontMeta[]): FontFamily[] {
+export function familyKey(source: string, familyName: string): string {
+  return `${source}:${familyName}`;
+}
+
+export function groupByFamily(fonts: StoredFontMeta[], starredFamilies?: Set<string>): FontFamily[] {
   const map = new Map<string, StoredFontMeta[]>();
 
   for (const font of fonts) {
@@ -122,12 +126,13 @@ export function groupByFamily(fonts: StoredFontMeta[]): FontFamily[] {
 
   const families: FontFamily[] = [];
   for (const [key, members] of map) {
-    const [src, familyName] = key.split('\0');
+    const [src, name] = key.split('\0');
     members.sort((a, b) => {
       if (a.weight !== b.weight) return a.weight - b.weight;
       return a.style.localeCompare(b.style);
     });
-    families.push({ familyName, fonts: members, source: src as any });
+    const fKey = familyKey(src, name);
+    families.push({ familyName: name, fonts: members, source: src as FontSource, starred: starredFamilies?.has(fKey) });
   }
 
   families.sort((a, b) => a.familyName.localeCompare(b.familyName));

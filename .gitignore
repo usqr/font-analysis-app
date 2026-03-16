@@ -13,6 +13,7 @@ dist-ssr
 *.local
 fonts-db.json
 fonts-data/
+font-paths.json
 test-results/
 .playwright-mcp/
 
