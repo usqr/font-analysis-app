@@ -6,7 +6,7 @@ A desktop-oriented web app for scanning, storing, analyzing, and comparing font 
 
 - **Font Library** — Scan local folders or download from Google Fonts. Save frequently-used font folder paths for quick access. Fonts are grouped by family with width tabs, style toggles, and collapsible cards. List and grid views with live "Aa" previews. Star favourite font families and add to compare from either view.
 - **Filtering** — Category radio buttons (Serif, Sans-Serif, Monospace, Display, Script), starred-only filter, text search, and histogram-based range filters for contrast, weight, width, and x-height.
-- **Manual Recategorization** — Each family card shows a colored category badge; click to override the auto-detected category. Bulk Edit mode allows selecting multiple families and applying category changes or tags in batch via a floating action bar.
+- **Manual Recategorization** — Each family card shows a colored category badge; click to override the auto-detected category. Bulk Edit mode allows selecting multiple families and applying category changes or tags in batch via a floating action bar. Overrides persist in a separate `font-overrides.json` file, surviving library clears and full rescans.
 - **Analyze** — Per-font analysis views: stroke contrast (with reference lines matching x-height view), x-height, proportions, weight distribution, spacing, and a paginated glyph grid with web font rendering and OTF feature filtering. Sidebar shows OpenType features and raw metadata (name, OS/2, head, post tables).
 - **Compare** — Overlay multiple fonts on a shared canvas with normalize toggle and auto-fit text sizing. Consistent color assignment across font toggles. Collapsible info panel with drag-resizable width.
 - **Format Support** — TTF, OTF, WOFF, WOFF2 (decompressed via wawoff2).
@@ -82,6 +82,7 @@ public/fonts/         # Sample fonts for testing
 | PUT | `/api/fonts/:id/tags` | Set tags |
 | PUT | `/api/fonts/bulk-tags` | Bulk add tags |
 | GET | `/api/tags` | Get all unique tags |
+| GET | `/api/overrides` | Get persistent overrides |
 | PUT | `/api/starred-families` | Toggle family starred status |
 | DELETE | `/api/fonts/:id` | Delete a font |
 | GET | `/api/font-paths` | Get saved font folder paths |

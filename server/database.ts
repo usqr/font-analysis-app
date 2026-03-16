@@ -145,6 +145,11 @@ export function deduplicateFonts(fonts: StoredFont[]): MergeResult {
 export function mergeFonts(existing: StoredFont[], incoming: StoredFont[]): MergeResult {
   const byPath = new Map(existing.map((f) => [f.filePath, f]));
   for (const font of incoming) {
+    const prev = byPath.get(font.filePath);
+    if (prev) {
+      if (prev.categoryOverride && !font.categoryOverride) font.categoryOverride = prev.categoryOverride;
+      if (prev.tags && prev.tags.length > 0 && (!font.tags || font.tags.length === 0)) font.tags = prev.tags;
+    }
     byPath.set(font.filePath, font);
   }
 
@@ -167,6 +172,95 @@ export function mergeFonts(existing: StoredFont[], incoming: StoredFont[]): Merg
   }
 
   return { fonts: kept, discardedIds };
+}
+
+// --- Persistent font overrides (survives rescans and library clears) ---
+
+interface FontOverrideEntry {
+  categoryOverride?: FontCategory;
+  tags?: string[];
+}
+
+interface FontOverridesFile {
+  version: number;
+  overrides: Record<string, FontOverrideEntry>;
+}
+
+function overridesFilePath(): string {
+  return path.resolve(path.dirname(dbPath), 'font-overrides.json');
+}
+
+export function overrideKey(font: { familyName: string; subfamilyName: string }): string {
+  return `${font.familyName}\0${font.subfamilyName}`;
+}
+
+export function readOverrides(): FontOverridesFile {
+  const file = overridesFilePath();
+  if (!fs.existsSync(file)) return { version: 1, overrides: {} };
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf-8')) as FontOverridesFile;
+  } catch {
+    return { version: 1, overrides: {} };
+  }
+}
+
+export function writeOverrides(data: FontOverridesFile): void {
+  const file = overridesFilePath();
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
+  fs.renameSync(tmp, file);
+}
+
+export function saveOverride(font: StoredFont): void {
+  const data = readOverrides();
+  const key = overrideKey(font);
+  const entry: FontOverrideEntry = {};
+  if (font.categoryOverride) entry.categoryOverride = font.categoryOverride;
+  if (font.tags && font.tags.length > 0) entry.tags = font.tags;
+
+  if (Object.keys(entry).length > 0) {
+    data.overrides[key] = { ...(data.overrides[key] ?? {}), ...entry };
+  }
+  writeOverrides(data);
+}
+
+export function saveOverrides(fonts: StoredFont[]): void {
+  const data = readOverrides();
+  for (const font of fonts) {
+    const key = overrideKey(font);
+    const entry: FontOverrideEntry = {};
+    if (font.categoryOverride) entry.categoryOverride = font.categoryOverride;
+    if (font.tags && font.tags.length > 0) entry.tags = font.tags;
+
+    if (Object.keys(entry).length > 0) {
+      data.overrides[key] = { ...(data.overrides[key] ?? {}), ...entry };
+    }
+  }
+  writeOverrides(data);
+}
+
+export function applyOverrides(fonts: StoredFont[]): number {
+  const data = readOverrides();
+  if (Object.keys(data.overrides).length === 0) return 0;
+
+  let applied = 0;
+  for (const font of fonts) {
+    const key = overrideKey(font);
+    const entry = data.overrides[key];
+    if (!entry) continue;
+
+    let changed = false;
+    if (entry.categoryOverride && !font.categoryOverride) {
+      font.categoryOverride = entry.categoryOverride;
+      changed = true;
+    }
+    if (entry.tags && entry.tags.length > 0 && (!font.tags || font.tags.length === 0)) {
+      font.tags = entry.tags;
+      changed = true;
+    }
+    if (changed) applied++;
+  }
+  return applied;
 }
 
 // --- Font folder paths (non-committed local config) ---

@@ -8,6 +8,7 @@ import {
   readDatabase, writeDatabase, mergeFonts, deduplicateFonts,
   writeFontData, readFontData, deleteFontData, clearAllFontData,
   readFontPaths, writeFontPaths,
+  applyOverrides, saveOverride, saveOverrides, readOverrides,
 } from './database.js';
 import { scanFolder, scanFont, walkDir, computeFontMetrics, classifyFont } from './scanner.js';
 import { listGoogleFonts, downloadGoogleFonts } from './googleFonts.js';
@@ -104,6 +105,8 @@ app.get('/api/scan-stream', (req, res) => {
     if (i >= total) {
       flush();
       const db = readDatabase();
+      const overridesApplied = applyOverrides(db.fonts);
+      if (overridesApplied > 0) writeDatabase(db);
       write({ type: 'done', added, failed, total: db.fonts.length });
       res.end();
       return;
@@ -164,6 +167,7 @@ app.post('/api/scan', async (req, res) => {
     const db = readDatabase();
     const { fonts, discardedIds } = mergeFonts(db.fonts, results.map((r) => r.meta));
     db.fonts = fonts;
+    applyOverrides(db.fonts);
     writeDatabase(db);
     for (const id of discardedIds) deleteFontData(id);
     res.json({ added: results.length, total: db.fonts.length });
@@ -227,8 +231,16 @@ app.post('/api/database/compute-metrics', (_req, res) => {
     }
   }
 
+  applyOverrides(db.fonts);
   writeDatabase(db);
   res.json({ updated, total: db.fonts.length });
+});
+
+// Get / manage persistent overrides file
+app.get('/api/overrides', (_req, res) => {
+  const data = readOverrides();
+  const count = Object.keys(data.overrides).length;
+  res.json({ count, overrides: data.overrides });
 });
 
 // Convert woff2 buffer to ttf (for client-side use)
@@ -425,6 +437,7 @@ app.put('/api/fonts/:id/category', (req, res) => {
   if (!font) { res.status(404).json({ error: 'Font not found' }); return; }
   font.categoryOverride = category;
   writeDatabase(db);
+  saveOverride(font);
   res.json({ ok: true });
 });
 
@@ -437,14 +450,17 @@ app.put('/api/fonts/bulk-category', (req, res) => {
   }
   const db = readDatabase();
   const idSet = new Set(ids as string[]);
+  const changed: typeof db.fonts = [];
   let updated = 0;
   for (const font of db.fonts) {
     if (idSet.has(font.id)) {
       font.categoryOverride = category;
+      changed.push(font);
       updated++;
     }
   }
   writeDatabase(db);
+  if (changed.length > 0) saveOverrides(changed);
   res.json({ updated });
 });
 
@@ -459,6 +475,7 @@ app.put('/api/fonts/:id/tags', (req, res) => {
   if (!font) { res.status(404).json({ error: 'Font not found' }); return; }
   font.tags = tags.filter((t: unknown) => typeof t === 'string' && t.length > 0);
   writeDatabase(db);
+  saveOverride(font);
   res.json({ ok: true, tags: font.tags });
 });
 
@@ -471,16 +488,19 @@ app.put('/api/fonts/bulk-tags', (req, res) => {
   const cleanTags = tags.filter((t: unknown) => typeof t === 'string' && t.length > 0);
   const db = readDatabase();
   const idSet = new Set(ids as string[]);
+  const changed: typeof db.fonts = [];
   let updated = 0;
   for (const font of db.fonts) {
     if (idSet.has(font.id)) {
       const existing = new Set(font.tags ?? []);
       for (const t of cleanTags) existing.add(t);
       font.tags = Array.from(existing);
+      changed.push(font);
       updated++;
     }
   }
   writeDatabase(db);
+  if (changed.length > 0) saveOverrides(changed);
   res.json({ updated });
 });
 
