@@ -1,73 +1,93 @@
-# React + TypeScript + Vite
+# Font Analysis App
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A desktop-oriented web app for scanning, storing, analyzing, and comparing font files. Built with React, Express, and opentype.js.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Font Library** — Scan local folders or download from Google Fonts. Fonts are grouped by family with width tabs, style toggles, and collapsible cards. List and grid views with live "Aa" previews.
+- **Filtering** — Category radio buttons (Serif, Sans-Serif, Monospace, Display, Script), text search, and histogram-based range filters for contrast, weight, width, and x-height.
+- **Analyze** — Per-font analysis views: stroke contrast, x-height, proportions, weight distribution, spacing, and a paginated glyph grid with OTF feature filtering. Sidebar shows OpenType features and raw metadata (name, OS/2, head, post tables).
+- **Compare** — Overlay multiple fonts on a shared canvas with normalize toggle and auto-fit text sizing.
+- **Format Support** — TTF, OTF, WOFF, WOFF2 (decompressed via wawoff2).
+- **Smart Naming** — Handles URW-style abbreviated names, typographic subfamily (name ID 17), super-family grouping across width variants, and fallback naming from filenames.
+- **Deduplication** — Variant-key dedup with format priority (OTF > TTF > WOFF > WOFF2), source-aware (local vs Google fonts coexist).
 
-## React Compiler
+## Tech Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+| Layer | Technology |
+|-------|-----------|
+| Client | React 19, React Router, Tailwind CSS 4 |
+| Server | Express 5, Node.js |
+| Font Parsing | opentype.js, wawoff2 |
+| Build | Vite, TypeScript |
+| Testing | Playwright |
 
-## Expanding the ESLint configuration
+## Getting Started
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Prerequisites
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- Node.js 18+
+- npm
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+### Install & Run
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+This starts both the Vite dev server and the Express API server (port 3001). The Vite proxy forwards `/api` requests to the backend.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### Other Commands
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run build       # TypeScript check + Vite production build
+npm run lint        # ESLint
+npm run preview     # Preview production build
 ```
+
+## Project Structure
+
+```
+server/
+  index.ts            # Express API routes
+  database.ts         # JSON file database (fonts-db.json) + types
+  scanner.ts          # Font file scanning, metrics computation, classification
+  googleFonts.ts      # Google Fonts metadata fetching + ZIP download
+src/
+  components/         # React views (Library, Analyze, Compare, Glyphs, etc.)
+  analysis/           # Client-side analysis modules (contrast, weight, spacing, ...)
+  lib/                # Utilities (API client, font families, OTF features, hooks)
+  types/              # TypeScript type definitions
+e2e/                  # Playwright E2E tests
+public/fonts/         # Sample fonts for testing
+```
+
+## API
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/pick-folder` | Native OS folder picker |
+| GET | `/api/scan-stream` | Streaming font scan (NDJSON) |
+| GET | `/api/database` | Get database |
+| POST | `/api/database` | Overwrite database |
+| DELETE | `/api/database` | Wipe database + font data |
+| POST | `/api/database/dedup` | Deduplicate fonts |
+| POST | `/api/database/compute-metrics` | Compute metrics + category for all fonts |
+| GET | `/api/fonts/:id/data` | Get font base64 data |
+| DELETE | `/api/fonts/:id` | Delete a font |
+| GET | `/api/google-fonts/list` | List Google Fonts families |
+| POST | `/api/google-fonts/download` | Download Google Fonts (streaming) |
+
+## Testing
+
+```bash
+npx playwright install chromium
+npx playwright test
+```
+
+The Playwright config auto-starts the dev server before running tests.
+
+## Known Issues
+
+- **GlyphsView crash** — The Glyphs tab can crash on certain fonts (e.g., IBM 3270) due to unexpected GSUB subtable structures. Needs a React error boundary and deeper investigation of edge-case font table layouts.

@@ -58,7 +58,13 @@ Database: `{ version: 1, fonts: StoredFont[] }` in `fonts-db.json`, atomic write
 | GET | `/api/google-fonts/list` | List all Google Fonts families (cached 1hr) |
 | POST | `/api/google-fonts/download` | Download Google Fonts to folder (NDJSON streaming) |
 
-## Changes Made in This Session
+## Repository
+
+- **GitHub**: Private repo at `usqr/font-analysis-app` (created 2026-03-16)
+- **Branch**: `master`
+- **`.gitignore`**: Excludes `node_modules`, `dist`, `fonts-db.json`, `fonts-data/`, `test-results/`, `.playwright-mcp/`, `.cursor/`, `.DS_Store`
+
+## Development History
 
 ### Plan 1: Extend Font Analysis App
 
