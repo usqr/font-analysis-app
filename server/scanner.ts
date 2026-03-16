@@ -1,0 +1,482 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { v4 as uuidv4 } from 'uuid';
+import * as opentype from 'opentype.js';
+import { decompress as woff2Decompress } from 'wawoff2';
+import type { StoredFont, FontMetrics, FontCategory, FontSource } from './database.js';
+
+const FONT_EXTENSIONS = new Set(['.ttf', '.otf', '.woff', '.woff2']);
+
+export function walkDir(dir: string): string[] {
+  const results: string[] = [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return results;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...walkDir(full));
+    } else if (FONT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+      results.push(full);
+    }
+  }
+  return results;
+}
+
+function inferStyle(subfamilyName: string): 'normal' | 'italic' | 'oblique' {
+  const lower = subfamilyName.toLowerCase();
+  if (lower.includes('oblique')) return 'oblique';
+  if (lower.includes('italic')) return 'italic';
+  return 'normal';
+}
+
+function inferWeight(font: opentype.Font, subfamilyName: string): number {
+  const os2 = font.tables.os2;
+  if (os2?.usWeightClass) return os2.usWeightClass;
+
+  const lower = subfamilyName.toLowerCase();
+  const map: Record<string, number> = {
+    thin: 100, hairline: 100,
+    extralight: 200, 'extra light': 200, ultralight: 200,
+    light: 300,
+    regular: 400, normal: 400, book: 400,
+    medium: 500,
+    semibold: 600, 'semi bold': 600, demibold: 600,
+    bold: 700,
+    extrabold: 800, 'extra bold': 800, ultrabold: 800,
+    black: 900, heavy: 900,
+  };
+
+  for (const [key, weight] of Object.entries(map)) {
+    if (lower.includes(key)) return weight;
+  }
+  return 400;
+}
+
+function familyNameFromFile(filePath: string): { family: string; subfamily: string | null } {
+  const base = path.basename(filePath, path.extname(filePath));
+  const cleaned = base.replace(/-webfont$/i, '');
+  const parts = cleaned.split(/[-_]/);
+  const family = parts[0] || 'Unknown';
+  const subfamily = parts.length > 1 ? parts.slice(1).join(' ').replace(/-webfont$/i, '').trim() || null : null;
+  return { family, subfamily };
+}
+
+function isUsableName(name: string | undefined): name is string {
+  return !!name && name.length >= 2 && name !== 'Unknown' && /[a-zA-Z]{2,}/.test(name);
+}
+
+const WEIGHT_ABBREVS: Record<string, string> = {
+  Bld: 'Bold', Blk: 'Black', Lgt: 'Light', Med: 'Medium',
+  Reg: 'Regular', Thn: 'Thin', Ult: 'Ultra',
+  Hvy: 'Heavy', Smb: 'SemiBold', Dmb: 'DemiBold',
+  Ext: 'Extra', Bk: 'Book',
+  Bol: 'Bold', Lig: 'Light', Hea: 'Heavy', Boo: 'Book',
+  Dem: 'DemiBold', Bla: 'Black', Sem: 'SemiBold', Thi: 'Thin',
+  Nor: 'Regular',
+  Bold: 'Bold', Black: 'Black', Light: 'Light', Medium: 'Medium',
+  Regular: 'Regular', Thin: 'Thin', Heavy: 'Heavy',
+  SemiBold: 'SemiBold', DemiBold: 'DemiBold', Book: 'Book',
+  ExtraLight: 'ExtraLight', UltraLight: 'UltraLight',
+  ExtraBold: 'ExtraBold', UltraBold: 'UltraBold',
+  Hairline: 'Hairline',
+};
+const WIDTH_ABBREVS: Record<string, string> = {
+  Nar: 'Narrow', Con: 'Condensed', Wid: 'Wide',
+  Exp: 'Expanded', Com: 'Compressed', Cnd: 'Condensed',
+  Narrow: 'Narrow', Condensed: 'Condensed', Wide: 'Wide',
+  Expanded: 'Expanded', Compressed: 'Compressed',
+  SemiCondensed: 'SemiCondensed', SemiExpanded: 'SemiExpanded',
+};
+const STYLE_ABBREVS: Record<string, 'italic' | 'oblique'> = {
+  It: 'italic', Obl: 'oblique',
+  Italic: 'italic', Oblique: 'oblique',
+};
+
+function splitCamelTokens(s: string): string {
+  return s.replace(/([a-z])([A-Z])/g, '$1 $2').trim();
+}
+
+function computeFamilyDiff(familyName: string, preferredFamily: string): string {
+  const diff = familyName.replace(preferredFamily, '').trim();
+  if (diff !== familyName) return splitCamelTokens(diff);
+
+  const normFamily = familyName.replace(/\s+/g, '');
+  const normPref = preferredFamily.replace(/\s+/g, '');
+  if (normFamily.startsWith(normPref)) {
+    return splitCamelTokens(normFamily.slice(normPref.length));
+  }
+  return splitCamelTokens(diff);
+}
+
+function parseAbbreviatedSubfamily(diff: string): { subfamilyName: string; style: 'normal' | 'italic' | 'oblique'; widthRemainder: string } {
+  const tokens = diff.split(/\s+/);
+  const weightParts: string[] = [];
+  let style: 'normal' | 'italic' | 'oblique' = 'normal';
+  const remainderParts: string[] = [];
+
+  for (const tok of tokens) {
+    if (STYLE_ABBREVS[tok]) {
+      style = STYLE_ABBREVS[tok];
+    } else if (WEIGHT_ABBREVS[tok]) {
+      weightParts.push(WEIGHT_ABBREVS[tok]);
+    } else if (WIDTH_ABBREVS[tok]) {
+      remainderParts.push(WIDTH_ABBREVS[tok]);
+    } else {
+      remainderParts.push(tok);
+    }
+  }
+
+  const parts = [...weightParts];
+  if (style === 'italic') parts.push('Italic');
+  if (style === 'oblique') parts.push('Oblique');
+
+  return {
+    subfamilyName: parts.length > 0 ? parts.join(' ') : 'Regular',
+    style,
+    widthRemainder: remainderParts.join(' '),
+  };
+}
+
+// --- Pure-math font metrics computation (no DOM/Canvas dependencies) ---
+
+type PathCmd = { type: string; x?: number; y?: number; x1?: number; y1?: number; x2?: number; y2?: number };
+
+function flattenCommands(commands: PathCmd[]): { x: number; y: number }[] {
+  const pts: { x: number; y: number }[] = [];
+  let cx = 0, cy = 0;
+  for (const cmd of commands) {
+    if (cmd.type === 'M') {
+      cx = cmd.x!; cy = cmd.y!;
+      pts.push({ x: cx, y: cy });
+    } else if (cmd.type === 'L') {
+      cx = cmd.x!; cy = cmd.y!;
+      pts.push({ x: cx, y: cy });
+    } else if (cmd.type === 'Q') {
+      const steps = 8;
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const mt = 1 - t;
+        pts.push({
+          x: mt * mt * cx + 2 * mt * t * cmd.x1! + t * t * cmd.x!,
+          y: mt * mt * cy + 2 * mt * t * cmd.y1! + t * t * cmd.y!,
+        });
+      }
+      cx = cmd.x!; cy = cmd.y!;
+    } else if (cmd.type === 'C') {
+      const steps = 10;
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const mt = 1 - t;
+        pts.push({
+          x: mt * mt * mt * cx + 3 * mt * mt * t * cmd.x1! + 3 * mt * t * t * cmd.x2! + t * t * t * cmd.x!,
+          y: mt * mt * mt * cy + 3 * mt * mt * t * cmd.y1! + 3 * mt * t * t * cmd.y2! + t * t * t * cmd.y!,
+        });
+      }
+      cx = cmd.x!; cy = cmd.y!;
+    }
+  }
+  return pts;
+}
+
+function polyArea(pts: { x: number; y: number }[]): number {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const j = (i + 1) % pts.length;
+    a += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
+  }
+  return a / 2;
+}
+
+function splitContoursFromCommands(commands: PathCmd[]): PathCmd[][] {
+  const contours: PathCmd[][] = [];
+  let cur: PathCmd[] = [];
+  for (const c of commands) {
+    cur.push(c);
+    if (c.type === 'Z') { contours.push(cur); cur = []; }
+  }
+  if (cur.length > 0) contours.push(cur);
+  return contours;
+}
+
+export function computeFontMetrics(font: opentype.Font): FontMetrics | null {
+  try {
+    const oGlyph = font.charToGlyph('o');
+    const xGlyph = font.charToGlyph('x');
+    const tGlyph = font.charToGlyph('T');
+    if (!oGlyph || !xGlyph) return null;
+
+    const oBB = oGlyph.getBoundingBox();
+    const xBB = xGlyph.getBoundingBox();
+    const oW = oBB.x2 - oBB.x1;
+    const oH = oBB.y2 - oBB.y1;
+    const xH = xBB.y2 - xBB.y1;
+    if (oW === 0 || oH === 0 || xH === 0) return null;
+
+    const widthRatio = oW / oH;
+    const xHeightRatio = xH / font.unitsPerEm;
+
+    const oPath = oGlyph.getPath(0, 0, font.unitsPerEm);
+    const contourCmds = splitContoursFromCommands(oPath.commands as PathCmd[]);
+    const polys = contourCmds.map(flattenCommands).filter(p => p.length >= 3);
+    const areas = polys.map(p => ({ pts: p, area: Math.abs(polyArea(p)) }));
+    areas.sort((a, b) => b.area - a.area);
+
+    let contrast = 1;
+    if (areas.length >= 2) {
+      const outer = areas[0].pts;
+      const inner = areas[1].pts;
+      let maxDist = 0, minDist = Infinity;
+      const step = Math.max(1, Math.floor(outer.length / 80));
+      for (let i = 0; i < outer.length; i += step) {
+        const op = outer[i];
+        let closest = Infinity;
+        for (const ip of inner) {
+          const d = Math.hypot(op.x - ip.x, op.y - ip.y);
+          if (d < closest) closest = d;
+        }
+        if (closest > maxDist) maxDist = closest;
+        if (closest < minDist) minDist = closest;
+      }
+      if (maxDist > 0) contrast = minDist / maxDist;
+    }
+
+    let fillWeight = 0;
+    if (areas.length >= 2) {
+      const filledArea = areas[0].area - areas[1].area;
+      const bbArea = oW * oH;
+      fillWeight = bbArea > 0 ? filledArea / bbArea : 0;
+    } else if (areas.length === 1) {
+      const bbArea = oW * oH;
+      fillWeight = bbArea > 0 ? areas[0].area / bbArea : 0;
+    }
+
+    const tBB = tGlyph?.getBoundingBox();
+    if (tBB) {
+      const capH = tBB.y2 - tBB.y1;
+      if (capH > 0) {
+        // refine xHeight ratio to be relative to em
+      }
+    }
+
+    return {
+      contrast: Math.max(0, Math.min(1, contrast)),
+      weight: Math.max(0, Math.min(1, fillWeight)),
+      width: Math.max(0, Math.min(2, widthRatio)),
+      xHeight: Math.max(0, Math.min(1, xHeightRatio)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isMonoByWidths(font: opentype.Font): boolean {
+  const chars = ['i', 'm', 'w', 'M', 'l', 'W'];
+  const widths = new Set<number>();
+  for (const ch of chars) {
+    const g = font.charToGlyph(ch);
+    if (g && g.advanceWidth != null && g.advanceWidth > 0) {
+      widths.add(g.advanceWidth);
+    }
+  }
+  return widths.size === 1 && widths.size > 0;
+}
+
+function classifyByPanose(os2: any): FontCategory | null {
+  const panose = os2?.panose;
+  if (!panose || !Array.isArray(panose)) return null;
+  if (panose.every((b: number) => b === 0)) return null;
+
+  const familyKind = panose[0];
+  if (familyKind === 3) return 'script';
+  if (familyKind === 4) return 'display';
+  if (familyKind === 5) return 'display';
+
+  if (familyKind === 2) {
+    if (panose[3] === 9) return 'monospace';
+    const serifStyle = panose[1];
+    if (serifStyle >= 2 && serifStyle <= 10) return 'serif';
+    if (serifStyle >= 11 && serifStyle <= 15) return 'sans-serif';
+  }
+
+  return null;
+}
+
+function detectSerifFromGlyph(font: opentype.Font): 'serif' | 'sans-serif' | null {
+  const iGlyph = font.charToGlyph('I');
+  if (!iGlyph) return null;
+
+  const bb = iGlyph.getBoundingBox();
+  const gW = bb.x2 - bb.x1;
+  const gH = bb.y2 - bb.y1;
+  if (gW === 0 || gH === 0) return null;
+
+  const p = iGlyph.getPath(0, 0, font.unitsPerEm);
+  const cmds = p.commands as PathCmd[];
+  const pts = flattenCommands(cmds);
+  if (pts.length < 4) return null;
+
+  const bottom = bb.y1;
+  const top = bb.y2;
+  const heightThreshold = gH * 0.1;
+
+  const bottomPts = pts.filter(pt => Math.abs(pt.y - bottom) < heightThreshold);
+  const topPts = pts.filter(pt => Math.abs(pt.y - top) < heightThreshold);
+
+  const spanX = (points: { x: number }[]) => {
+    if (points.length < 2) return 0;
+    const xs = points.map(pt => pt.x);
+    return Math.max(...xs) - Math.min(...xs);
+  };
+
+  const bottomSpan = spanX(bottomPts);
+  const topSpan = spanX(topPts);
+  const stemWidth = gW;
+
+  const serifRatio = Math.max(bottomSpan, topSpan) / stemWidth;
+  if (serifRatio > 1.4) return 'serif';
+  if (serifRatio < 1.15) return 'sans-serif';
+  return null;
+}
+
+export function classifyFont(font: opentype.Font, metrics?: FontMetrics | null): FontCategory {
+  const post = font.tables.post as any;
+  if (post?.isFixedPitch) return 'monospace';
+  if (isMonoByWidths(font)) return 'monospace';
+
+  const os2 = font.tables.os2 as any;
+
+  if (os2 && os2.sFamilyClass != null) {
+    const classId = (os2.sFamilyClass >> 8) & 0xFF;
+    if (classId >= 1 && classId <= 5 || classId === 7) return 'serif';
+    if (classId === 8) return 'sans-serif';
+    if (classId === 10) return 'script';
+  }
+
+  const panoseResult = classifyByPanose(os2);
+  if (panoseResult) return panoseResult;
+
+  const serifResult = detectSerifFromGlyph(font);
+  if (serifResult) return serifResult;
+
+  if (metrics) {
+    if (metrics.contrast < 0.4) return 'serif';
+    if (metrics.contrast > 0.85) return 'sans-serif';
+  }
+
+  return 'display';
+}
+
+export interface ScanFontResult {
+  meta: StoredFont;
+  base64Data: string;
+}
+
+export async function scanFont(filePath: string, source: FontSource = 'local'): Promise<ScanFontResult | null> {
+  try {
+    const rawBuffer = fs.readFileSync(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const isWoff2 = ext === '.woff2';
+
+    let fontBuffer: Buffer;
+    if (isWoff2) {
+      const decompressed = await woff2Decompress(rawBuffer);
+      fontBuffer = Buffer.from(decompressed);
+    } else {
+      fontBuffer = rawBuffer;
+    }
+
+    const arrayBuffer = fontBuffer.buffer.slice(fontBuffer.byteOffset, fontBuffer.byteOffset + fontBuffer.byteLength);
+    const font = opentype.parse(arrayBuffer as ArrayBuffer);
+    const stat = fs.statSync(filePath);
+    let subfamilyName = font.names.fontSubfamily?.en ?? 'Regular';
+    const preferredFamily =
+      font.names.preferredFamily?.en ??
+      (font.names as any).typographicFamily?.en ??
+      undefined;
+    const preferredSubfamily =
+      (font.names as any).preferredSubfamily?.en ??
+      (font.names as any).typographicSubfamily?.en ??
+      undefined;
+
+    if (preferredSubfamily && /^(Regular|Normal)$/i.test(subfamilyName)) {
+      subfamilyName = preferredSubfamily;
+    }
+
+    let familyName = font.names.fontFamily?.en;
+    if (!isUsableName(familyName)) {
+      const fromFile = familyNameFromFile(filePath);
+      familyName = fromFile.family;
+      if (fromFile.subfamily && subfamilyName === 'Regular') {
+        subfamilyName = fromFile.subfamily;
+      }
+    }
+
+    let style = inferStyle(subfamilyName);
+
+    if (
+      preferredFamily &&
+      familyName !== preferredFamily &&
+      /^(Regular|Normal)$/i.test(subfamilyName)
+    ) {
+      const diff = computeFamilyDiff(familyName, preferredFamily);
+      if (diff) {
+        const parsed = parseAbbreviatedSubfamily(diff);
+        if (parsed.subfamilyName !== 'Regular' || parsed.style !== 'normal') {
+          subfamilyName = parsed.subfamilyName;
+          style = parsed.style;
+        }
+      }
+    }
+
+    const metrics = computeFontMetrics(font) ?? undefined;
+    const category = classifyFont(font, metrics);
+
+    return {
+      meta: {
+        id: uuidv4(),
+        filePath,
+        fileName: path.basename(filePath),
+        familyName,
+        ...(preferredFamily ? { preferredFamilyName: preferredFamily } : {}),
+        subfamilyName,
+        weight: inferWeight(font, subfamilyName),
+        style,
+        format: isWoff2 ? 'ttf' : ext.slice(1),
+        fileSize: stat.size,
+        glyphCount: font.glyphs.length,
+        unitsPerEm: font.unitsPerEm,
+        ascender: font.ascender,
+        descender: font.descender,
+        lastModified: stat.mtime.toISOString(),
+        addedAt: new Date().toISOString(),
+        ...(metrics ? { metrics } : {}),
+        category,
+        source,
+      },
+      base64Data: fontBuffer.toString('base64'),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function scanFolder(folderPath: string, source: FontSource = 'local'): Promise<ScanFontResult[]> {
+  const resolved = path.resolve(folderPath);
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+    throw new Error(`Not a valid directory: ${folderPath}`);
+  }
+
+  const files = walkDir(resolved);
+  const fonts: ScanFontResult[] = [];
+
+  for (const file of files) {
+    const result = await scanFont(file, source);
+    if (result) fonts.push(result);
+  }
+
+  return fonts;
+}
