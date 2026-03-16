@@ -1031,6 +1031,10 @@ export function LibraryView() {
                 onAnalyze={(id) => navigate(`/analyze/${id}`)}
                 onToggleStar={handleToggleStarFamily}
                 onToggleSelect={toggleSelect}
+                onCategoryOverride={handleFamilyCategoryOverride}
+                bulkEditMode={bulkEditMode}
+                bulkSelected={bulkSelected.has(family.familyName)}
+                onBulkToggle={toggleBulkSelect}
               />
             ))}
           </div>
@@ -1598,13 +1602,19 @@ interface GridFamilyCardProps {
   onAnalyze: (id: string) => void;
   onToggleStar: (family: FontFamily) => void;
   onToggleSelect: (id: string) => void;
+  onCategoryOverride?: (family: FontFamily, cat: FontCategory) => void;
+  bulkEditMode?: boolean;
+  bulkSelected?: boolean;
+  onBulkToggle?: (familyName: string) => void;
 }
 
-function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSelect }: GridFamilyCardProps) {
+function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSelect, onCategoryOverride, bulkEditMode, bulkSelected, onBulkToggle }: GridFamilyCardProps) {
   const previewFont = useMemo(() => pickPreviewFont(family.fonts), [family.fonts]);
   const { fontFamily, loading, ref } = useFontFace(previewFont.id);
   const [showVariants, setShowVariants] = useState(false);
+  const [showCatPopover, setShowCatPopover] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const catPopoverRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!showVariants) return;
@@ -1617,16 +1627,44 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, [showVariants]);
 
+  useEffect(() => {
+    if (!showCatPopover) return;
+    const handler = (e: MouseEvent) => {
+      if (catPopoverRef.current && !catPopoverRef.current.contains(e.target as Node)) {
+        setShowCatPopover(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showCatPopover]);
+
   const anySelected = family.fonts.some((f) => selected.has(f.id));
+  const effectiveCategory = previewFont.categoryOverride ?? previewFont.category;
+  const CAT_COLORS: Record<string, string> = {
+    'serif': 'bg-rose-500/15 text-rose-400 border-rose-500/30',
+    'sans-serif': 'bg-sky-500/15 text-sky-400 border-sky-500/30',
+    'monospace': 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+    'display': 'bg-purple-500/15 text-purple-400 border-purple-500/30',
+    'script': 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+  };
 
   return (
     <div
       ref={ref}
-      className="group relative flex cursor-pointer flex-col items-center rounded-lg border border-neutral-800 bg-neutral-900 p-4 transition-colors hover:border-neutral-600"
-      onClick={() => onAnalyze(previewFont.id)}
+      className={`group relative flex cursor-pointer flex-col items-center rounded-lg border bg-neutral-900 p-4 transition-colors hover:border-neutral-600 ${bulkSelected ? 'border-orange-500' : 'border-neutral-800'}`}
+      onClick={() => bulkEditMode ? onBulkToggle?.(family.familyName) : onAnalyze(previewFont.id)}
       data-testid="grid-card"
     >
-      <div className="absolute left-2 top-2">
+      <div className="absolute left-2 top-2 flex items-center gap-1">
+        {bulkEditMode && (
+          <input
+            type="checkbox"
+            checked={bulkSelected ?? false}
+            onChange={(e) => { e.stopPropagation(); onBulkToggle?.(family.familyName); }}
+            onClick={(e) => e.stopPropagation()}
+            className="h-3.5 w-3.5 shrink-0 rounded border-neutral-600 bg-neutral-800 accent-orange-500"
+          />
+        )}
         <button
           onClick={(e) => { e.stopPropagation(); onToggleStar(family); }}
           className="text-base leading-none transition-colors"
@@ -1707,9 +1745,47 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
       <h3 className="mt-2 w-full truncate text-center text-sm font-medium text-white">
         {family.familyName}
       </h3>
-      <p className="text-xs text-neutral-500">
-        {family.fonts.length} Style{family.fonts.length !== 1 ? 's' : ''}
-      </p>
+      <div className="relative mt-0.5 flex items-center gap-1.5">
+        <p className="text-xs text-neutral-500">
+          {family.fonts.length} Style{family.fonts.length !== 1 ? 's' : ''}
+        </p>
+        {effectiveCategory && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowCatPopover((v) => !v); }}
+            className={`rounded-full border px-1.5 py-px text-[9px] font-medium leading-tight ${CAT_COLORS[effectiveCategory] ?? 'bg-neutral-700/50 text-neutral-500 border-neutral-700'}`}
+            title={`Category: ${effectiveCategory}${previewFont.categoryOverride ? ' (override)' : ''}`}
+          >
+            {effectiveCategory}
+          </button>
+        )}
+        {showCatPopover && (
+          <div
+            ref={catPopoverRef}
+            className="absolute bottom-full right-0 z-30 mb-1 w-36 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-neutral-800 px-3 py-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Set Category</span>
+            </div>
+            {CATEGORIES.map((cat) => (
+              <button
+                key={cat.id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCategoryOverride?.(family, cat.id);
+                  setShowCatPopover(false);
+                }}
+                className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-neutral-800 ${
+                  effectiveCategory === cat.id ? 'text-blue-400' : 'text-neutral-300'
+                }`}
+              >
+                {effectiveCategory === cat.id && <span className="text-blue-400">&#10003;</span>}
+                <span className={effectiveCategory === cat.id ? '' : 'ml-5'}>{cat.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
