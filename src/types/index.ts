@@ -117,6 +117,7 @@ export interface StoredFontMeta {
   metrics?: FontMetrics;
   category?: FontCategory;
   source?: FontSource;
+  starred?: boolean;
 }
 
 export interface StoredFontData {

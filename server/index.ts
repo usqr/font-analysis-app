@@ -326,6 +326,19 @@ app.put('/api/fonts/:id/refresh', async (req, res) => {
   res.json(result.meta);
 });
 
+// Toggle starred status on a font
+app.put('/api/fonts/:id/star', (req, res) => {
+  const db = readDatabase();
+  const font = db.fonts.find((f) => f.id === req.params.id);
+  if (!font) {
+    res.status(404).json({ error: 'Font not found' });
+    return;
+  }
+  font.starred = !font.starred;
+  writeDatabase(db);
+  res.json({ starred: font.starred });
+});
+
 // Delete a font from the database
 app.delete('/api/fonts/:id', (req, res) => {
   const db = readDatabase();

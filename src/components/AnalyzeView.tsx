@@ -15,7 +15,7 @@ import { analyzeProportions } from '../analysis/proportions';
 import { analyzeWeight } from '../analysis/weight';
 import { analyzeSpacing } from '../analysis/spacing';
 import { exportAnalysisJSON, exportCanvasAsAvif } from '../lib/exportUtils';
-import { fetchFontData, fetchDatabase } from '../lib/api';
+import { fetchFontData, fetchDatabase, toggleStar } from '../lib/api';
 import { groupByWidth, widthQualifier, weightLabel, superFamilyName } from '../lib/fontFamilies';
 import { extractOTFFeatures, OTF_FEATURE_NAMES } from '../lib/otfFeatures';
 import type { StoredFontMeta } from '../types';
@@ -370,16 +370,32 @@ export function AnalyzeView() {
                   {fontData.familyName}
                 </h1>
                 {currentMeta && (
-                  <span
-                    className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
-                      currentMeta.source === 'google'
-                        ? 'bg-blue-500/15 text-blue-400'
-                        : 'bg-neutral-700/50 text-neutral-500'
-                    }`}
-                    title={currentMeta.source === 'google' ? 'Google Fonts' : 'Local font'}
-                  >
-                    {currentMeta.source === 'google' ? 'G' : 'L'}
-                  </span>
+                  <>
+                    <button
+                      onClick={async () => {
+                        setCurrentMeta((prev) => prev ? { ...prev, starred: !prev.starred } : prev);
+                        try { await toggleStar(currentMeta.id); } catch {
+                          setCurrentMeta((prev) => prev ? { ...prev, starred: !prev.starred } : prev);
+                        }
+                      }}
+                      className="text-lg leading-none transition-colors"
+                      title={currentMeta.starred ? 'Unstar' : 'Star'}
+                    >
+                      {currentMeta.starred
+                        ? <span className="text-amber-400">&#9733;</span>
+                        : <span className="text-neutral-600 hover:text-amber-400/60">&#9734;</span>}
+                    </button>
+                    <span
+                      className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                        currentMeta.source === 'google'
+                          ? 'bg-blue-500/15 text-blue-400'
+                          : 'bg-neutral-700/50 text-neutral-500'
+                      }`}
+                      title={currentMeta.source === 'google' ? 'Google Fonts' : 'Local font'}
+                    >
+                      {currentMeta.source === 'google' ? 'G' : 'L'}
+                    </span>
+                  </>
                 )}
               </div>
               <p className="text-xs text-neutral-400">

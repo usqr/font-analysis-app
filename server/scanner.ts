@@ -378,6 +378,28 @@ function detectSerifFromGlyph(font: opentype.Font): 'serif' | 'sans-serif' | nul
   return null;
 }
 
+const NAME_CATEGORY_PATTERNS: { pattern: RegExp; category: FontCategory }[] = [
+  { pattern: /\b(script|handwrit|hand|brush|calligraph)\b/i, category: 'script' },
+  { pattern: /\b(mono|monospace|code|console|terminal)\b/i, category: 'monospace' },
+  { pattern: /\b(display|decorat|ornament|poster|stencil)\b/i, category: 'display' },
+  { pattern: /\bsans\b/i, category: 'sans-serif' },
+];
+
+function classifyByName(font: opentype.Font): FontCategory | null {
+  const names = font.names as any;
+  const candidates = [
+    names?.fontFamily?.en,
+    names?.preferredFamily?.en,
+    names?.fontSubfamily?.en,
+    names?.preferredSubfamily?.en,
+  ].filter(Boolean).join(' ');
+  if (!candidates) return null;
+  for (const { pattern, category } of NAME_CATEGORY_PATTERNS) {
+    if (pattern.test(candidates)) return category;
+  }
+  return null;
+}
+
 export function classifyFont(font: opentype.Font, metrics?: FontMetrics | null): FontCategory {
   const post = font.tables.post as any;
   if (post?.isFixedPitch) return 'monospace';
@@ -402,6 +424,9 @@ export function classifyFont(font: opentype.Font, metrics?: FontMetrics | null):
     if (metrics.contrast < 0.4) return 'serif';
     if (metrics.contrast > 0.85) return 'sans-serif';
   }
+
+  const nameResult = classifyByName(font);
+  if (nameResult) return nameResult;
 
   return 'display';
 }

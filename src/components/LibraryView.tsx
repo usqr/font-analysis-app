@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { StoredFontMeta, FontFamily, FontCategory } from '../types';
 import type { ScanEvent, ScanProgressUpdate } from '../lib/api';
-import { fetchDatabase, scanFolderStream, pickFolder, deleteFont, refreshFont, updateFontPath, clearDatabase, deduplicateDatabase, computeMetrics, downloadGoogleFonts as downloadGFonts } from '../lib/api';
+import { fetchDatabase, scanFolderStream, pickFolder, deleteFont, refreshFont, updateFontPath, clearDatabase, deduplicateDatabase, computeMetrics, downloadGoogleFonts as downloadGFonts, toggleStar } from '../lib/api';
 import type { GoogleDownloadEvent } from '../lib/api';
 import { groupByFamily, variantLabel, groupByWidth, type WidthStyleGroup } from '../lib/fontFamilies';
 import { useFontFace } from '../lib/useFontFace';
@@ -60,6 +60,7 @@ export function LibraryView() {
   const [widthRange, setWidthRange] = useState<[number, number]>([0, 2]);
   const [xHeightRange, setXHeightRange] = useState<[number, number]>([0, 1]);
   const [metricsReady, setMetricsReady] = useState(false);
+  const [showStarredOnly, setShowStarredOnly] = useState(false);
 
   const loadDatabase = useCallback(async () => {
     try {
@@ -228,6 +229,23 @@ export function LibraryView() {
     });
   }, []);
 
+  const handleToggleStar = useCallback(async (id: string) => {
+    setAllFonts((prev) => {
+      const next = prev.map((f) => (f.id === id ? { ...f, starred: !f.starred } : f));
+      setFamilies(groupByFamily(next));
+      return next;
+    });
+    try {
+      await toggleStar(id);
+    } catch {
+      setAllFonts((prev) => {
+        const next = prev.map((f) => (f.id === id ? { ...f, starred: !f.starred } : f));
+        setFamilies(groupByFamily(next));
+        return next;
+      });
+    }
+  }, []);
+
   const handleCompare = useCallback(() => {
     if (selected.size < 2) return;
     const ids = Array.from(selected).slice(0, 5);
@@ -268,6 +286,9 @@ export function LibraryView() {
 
   const searchAndCatFiltered = useMemo(() => {
     let result = families;
+    if (showStarredOnly) {
+      result = result.filter((f) => f.fonts.some((v) => v.starred));
+    }
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter((f) => f.familyName.toLowerCase().includes(q));
@@ -279,7 +300,7 @@ export function LibraryView() {
       });
     }
     return result;
-  }, [families, search, selectedCategory, familyMetrics]);
+  }, [families, search, selectedCategory, familyMetrics, showStarredOnly]);
 
   const filteredHistogramValues = useMemo(
     () => collectMetricValues(searchAndCatFiltered),
@@ -323,6 +344,7 @@ export function LibraryView() {
 
   const resetAllFilters = useCallback(() => {
     setSelectedCategory(null);
+    setShowStarredOnly(false);
     setSearch('');
     if (histogramValues.contrast.length > 0) {
       const sorted = (a: number[]) => { const s = [...a].sort((x, y) => x - y); return [s[0], s[s.length - 1]] as [number, number]; };
@@ -526,6 +548,17 @@ export function LibraryView() {
       {allFonts.length > 0 && (
         <div className="border-b border-neutral-800 px-4 py-2.5">
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowStarredOnly((v) => !v)}
+              className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                showStarredOnly
+                  ? 'border-amber-500 bg-amber-500/10 text-amber-400'
+                  : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-300'
+              }`}
+            >
+              &#9733; Starred
+            </button>
+            <span className="mx-1 text-neutral-700">|</span>
             {CATEGORIES.map((cat) => (
               <button
                 key={cat.id}
@@ -539,7 +572,7 @@ export function LibraryView() {
                 {cat.label}
               </button>
             ))}
-            {(selectedCategory !== null || search.trim()) && (
+            {(selectedCategory !== null || search.trim() || showStarredOnly) && (
               <button
                 onClick={resetAllFilters}
                 className="ml-1 text-xs text-neutral-500 hover:text-neutral-300"
@@ -859,7 +892,10 @@ export function LibraryView() {
               <GridFamilyCard
                 key={family.familyName}
                 family={family}
+                selected={selected}
                 onAnalyze={(id) => navigate(`/analyze/${id}`)}
+                onToggleStar={handleToggleStar}
+                onToggleSelect={toggleSelect}
               />
             ))}
           </div>
@@ -871,6 +907,7 @@ export function LibraryView() {
                 family={family}
                 selected={selected}
                 onToggleSelect={toggleSelect}
+                onToggleStar={handleToggleStar}
                 onAnalyze={(id) => navigate(`/analyze/${id}`)}
                 onDelete={handleDelete}
                 onRefresh={handleRefresh}
@@ -881,6 +918,88 @@ export function LibraryView() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Floating compare tray */}
+      {selected.size > 0 && (
+        <CompareTray
+          selected={selected}
+          allFonts={allFonts}
+          onRemove={(id) => toggleSelect(id)}
+          onClear={() => setSelected(new Set())}
+          onCompare={handleCompare}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Floating Compare Tray                                              */
+/* ------------------------------------------------------------------ */
+
+function CompareTray({
+  selected,
+  allFonts,
+  onRemove,
+  onClear,
+  onCompare,
+}: {
+  selected: Set<string>;
+  allFonts: StoredFontMeta[];
+  onRemove: (id: string) => void;
+  onClear: () => void;
+  onCompare: () => void;
+}) {
+  const selectedFonts = useMemo(
+    () => allFonts.filter((f) => selected.has(f.id)).slice(0, 5),
+    [allFonts, selected],
+  );
+
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-neutral-700 bg-neutral-900/95 px-4 py-2.5 shadow-2xl backdrop-blur-sm">
+      <div className="mx-auto flex max-w-7xl items-center gap-3">
+        <span className="shrink-0 text-xs font-medium text-neutral-400">
+          {selected.size} selected
+        </span>
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+          {selectedFonts.map((f) => (
+            <span
+              key={f.id}
+              className="flex shrink-0 items-center gap-1 rounded-full bg-neutral-800 px-2.5 py-1 text-xs text-neutral-300"
+            >
+              <span className="max-w-32 truncate">
+                {f.preferredFamilyName ?? f.familyName} {f.subfamilyName}
+              </span>
+              <button
+                onClick={() => onRemove(f.id)}
+                className="ml-0.5 text-neutral-500 hover:text-neutral-200"
+              >
+                &times;
+              </button>
+            </span>
+          ))}
+          {selected.size > 5 && (
+            <span className="shrink-0 text-xs text-neutral-500">
+              +{selected.size - 5} more
+            </span>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={onClear}
+            className="rounded-md px-3 py-1.5 text-xs text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white"
+          >
+            Clear
+          </button>
+          <button
+            onClick={onCompare}
+            disabled={selected.size < 2}
+            className="rounded-md bg-purple-600 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-purple-500 disabled:opacity-40"
+          >
+            Compare
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -919,6 +1038,7 @@ interface FamilyCardProps {
   family: FontFamily;
   selected: Set<string>;
   onToggleSelect: (id: string) => void;
+  onToggleStar: (id: string) => void;
   onAnalyze: (id: string) => void;
   onDelete: (id: string) => void;
   onRefresh: (id: string) => void;
@@ -931,6 +1051,7 @@ function FamilyCard({
   family,
   selected,
   onToggleSelect,
+  onToggleStar,
   onAnalyze,
   onDelete,
   onRefresh,
@@ -1063,7 +1184,7 @@ function FamilyCard({
             {displayedFonts.map((font) => (
               <div
                 key={font.id}
-                className="group flex items-center gap-1.5 border-b border-neutral-800/50 px-3 py-1.5 last:border-b-0"
+                className="group relative flex items-center gap-1.5 border-b border-neutral-800/50 px-3 py-1.5 last:border-b-0"
               >
                 <input
                   type="checkbox"
@@ -1071,8 +1192,17 @@ function FamilyCard({
                   onChange={() => onToggleSelect(font.id)}
                   className="h-3.5 w-3.5 shrink-0 rounded border-neutral-600 bg-neutral-800 accent-blue-500"
                 />
+                <button
+                  onClick={(e) => { e.stopPropagation(); onToggleStar(font.id); }}
+                  className="shrink-0 text-sm leading-none transition-colors"
+                  title={font.starred ? 'Unstar' : 'Star'}
+                >
+                  {font.starred
+                    ? <span className="text-amber-400">&#9733;</span>
+                    : <span className="text-neutral-700 hover:text-amber-400/60">&#9734;</span>}
+                </button>
                 <div className="min-w-0 flex-1">
-                  <span className="text-xs text-neutral-300">
+                  <span className="block truncate text-xs text-neutral-300">
                     {variantLabel(font, hasMultipleWidths)}
                   </span>
                   {cardState === 'expanded' && (
@@ -1081,10 +1211,10 @@ function FamilyCard({
                     </p>
                   )}
                 </div>
-                <span className="shrink-0 text-xs text-neutral-600">
+                <span className="min-w-10 shrink-0 text-right text-xs tabular-nums text-neutral-600">
                   {font.weight}
                 </span>
-                <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="absolute right-2 top-1/2 hidden -translate-y-1/2 gap-1 rounded-md bg-neutral-900/95 px-1 py-0.5 shadow-lg group-hover:flex">
                   <button
                     onClick={() => onAnalyze(font.id)}
                     className="rounded px-2 py-0.5 text-xs text-blue-400 transition-colors hover:bg-blue-500/10"
@@ -1134,23 +1264,100 @@ function pickPreviewFont(fonts: StoredFontMeta[]): StoredFontMeta {
 
 interface GridFamilyCardProps {
   family: FontFamily;
+  selected: Set<string>;
   onAnalyze: (id: string) => void;
+  onToggleStar: (id: string) => void;
+  onToggleSelect: (id: string) => void;
 }
 
-function GridFamilyCard({ family, onAnalyze }: GridFamilyCardProps) {
+function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSelect }: GridFamilyCardProps) {
   const previewFont = useMemo(() => pickPreviewFont(family.fonts), [family.fonts]);
   const { fontFamily, loading, ref } = useFontFace(previewFont.id);
+  const [showVariants, setShowVariants] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showVariants) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setShowVariants(false);
+      }
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [showVariants]);
+
+  const anySelected = family.fonts.some((f) => selected.has(f.id));
 
   return (
     <div
       ref={ref}
-      className="relative flex cursor-pointer flex-col items-center rounded-lg border border-neutral-800 bg-neutral-900 p-4 transition-colors hover:border-neutral-600"
+      className="group relative flex cursor-pointer flex-col items-center rounded-lg border border-neutral-800 bg-neutral-900 p-4 transition-colors hover:border-neutral-600"
       onClick={() => onAnalyze(previewFont.id)}
       data-testid="grid-card"
     >
-      <div className="absolute right-2 top-2">
+      <div className="absolute left-2 top-2">
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleStar(previewFont.id); }}
+          className="text-base leading-none transition-colors"
+          title={previewFont.starred ? 'Unstar' : 'Star'}
+        >
+          {previewFont.starred
+            ? <span className="text-amber-400">&#9733;</span>
+            : <span className="text-neutral-700 opacity-0 transition-opacity hover:text-amber-400/60 group-hover:opacity-100">&#9734;</span>}
+        </button>
+      </div>
+      <div className="absolute right-2 top-2 flex items-center gap-1">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (family.fonts.length === 1) {
+              onToggleSelect(previewFont.id);
+            } else {
+              setShowVariants((v) => !v);
+            }
+          }}
+          className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold transition-all ${
+            anySelected
+              ? 'bg-blue-500 text-white'
+              : 'bg-neutral-700/50 text-neutral-500 opacity-0 hover:bg-blue-500/30 hover:text-blue-300 group-hover:opacity-100'
+          }`}
+          title="Add to compare"
+        >
+          {anySelected ? selected.size : '+'}
+        </button>
         <SourceBadge source={previewFont.source} />
       </div>
+
+      {showVariants && (
+        <div
+          ref={popoverRef}
+          className="absolute right-1 top-8 z-20 w-48 rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="border-b border-neutral-800 px-3 py-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Add to compare</span>
+          </div>
+          <div className="max-h-48 overflow-y-auto py-1">
+            {family.fonts.map((f) => (
+              <label
+                key={f.id}
+                className="flex cursor-pointer items-center gap-2 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(f.id)}
+                  onChange={() => onToggleSelect(f.id)}
+                  className="h-3 w-3 rounded border-neutral-600 bg-neutral-800 accent-blue-500"
+                />
+                <span className="truncate">{variantLabel(f)}</span>
+                <span className="ml-auto shrink-0 tabular-nums text-neutral-600">{f.weight}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex h-24 w-full items-center justify-center">
         {loading ? (
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-600 border-t-blue-400" />

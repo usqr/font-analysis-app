@@ -4,8 +4,8 @@ A desktop-oriented web app for scanning, storing, analyzing, and comparing font 
 
 ## Features
 
-- **Font Library** — Scan local folders or download from Google Fonts. Fonts are grouped by family with width tabs, style toggles, and collapsible cards. List and grid views with live "Aa" previews.
-- **Filtering** — Category radio buttons (Serif, Sans-Serif, Monospace, Display, Script), text search, and histogram-based range filters for contrast, weight, width, and x-height.
+- **Font Library** — Scan local folders or download from Google Fonts. Fonts are grouped by family with width tabs, style toggles, and collapsible cards. List and grid views with live "Aa" previews. Star favourite fonts and add to compare from either view.
+- **Filtering** — Category radio buttons (Serif, Sans-Serif, Monospace, Display, Script), starred-only filter, text search, and histogram-based range filters for contrast, weight, width, and x-height.
 - **Analyze** — Per-font analysis views: stroke contrast (with reference lines matching x-height view), x-height, proportions, weight distribution, spacing, and a paginated glyph grid with web font rendering and OTF feature filtering. Sidebar shows OpenType features and raw metadata (name, OS/2, head, post tables).
 - **Compare** — Overlay multiple fonts on a shared canvas with normalize toggle and auto-fit text sizing. Consistent color assignment across font toggles. Collapsible info panel with drag-resizable width.
 - **Format Support** — TTF, OTF, WOFF, WOFF2 (decompressed via wawoff2).
@@ -75,6 +75,7 @@ public/fonts/         # Sample fonts for testing
 | POST | `/api/database/dedup` | Deduplicate fonts |
 | POST | `/api/database/compute-metrics` | Compute metrics + category for all fonts |
 | GET | `/api/fonts/:id/data` | Get font base64 data |
+| PUT | `/api/fonts/:id/star` | Toggle font starred status |
 | DELETE | `/api/fonts/:id` | Delete a font |
 | GET | `/api/google-fonts/list` | List Google Fonts families |
 | POST | `/api/google-fonts/download` | Download Google Fonts (streaming) |

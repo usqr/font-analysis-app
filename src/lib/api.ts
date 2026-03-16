@@ -118,6 +118,11 @@ export async function deleteFont(id: string): Promise<void> {
   await json(res);
 }
 
+export async function toggleStar(id: string): Promise<{ starred: boolean }> {
+  const res = await fetch(`${BASE}/fonts/${id}/star`, { method: 'PUT' });
+  return json<{ starred: boolean }>(res);
+}
+
 export async function convertWoff2(base64Data: string): Promise<string> {
   const res = await fetch(`${BASE}/convert-woff2`, {
     method: 'POST',

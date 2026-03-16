@@ -31,6 +31,7 @@ export interface StoredFont {
   metrics?: FontMetrics;
   category?: FontCategory;
   source?: FontSource;
+  starred?: boolean;
 }
 
 export interface FontDatabase {
