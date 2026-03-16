@@ -1,4 +1,4 @@
-import type { FontDatabaseResponse, StoredFontMeta, StoredFontData, ScanResult } from '../types';
+import type { FontDatabaseResponse, StoredFontMeta, StoredFontData, ScanResult, FontCategory } from '../types';
 
 const BASE = '/api';
 
@@ -178,6 +178,50 @@ export async function clearDatabase(): Promise<void> {
 export async function computeMetrics(): Promise<{ updated: number; total: number }> {
   const res = await fetch(`${BASE}/database/compute-metrics`, { method: 'POST' });
   return json<{ updated: number; total: number }>(res);
+}
+
+// --- Category & Tags ---
+
+export async function setFontCategory(id: string, category: FontCategory): Promise<void> {
+  const res = await fetch(`${BASE}/fonts/${id}/category`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ category }),
+  });
+  await json(res);
+}
+
+export async function bulkSetCategory(ids: string[], category: FontCategory): Promise<{ updated: number }> {
+  const res = await fetch(`${BASE}/fonts/bulk-category`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, category }),
+  });
+  return json<{ updated: number }>(res);
+}
+
+export async function setFontTags(id: string, tags: string[]): Promise<void> {
+  const res = await fetch(`${BASE}/fonts/${id}/tags`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tags }),
+  });
+  await json(res);
+}
+
+export async function bulkSetTags(ids: string[], tags: string[]): Promise<{ updated: number }> {
+  const res = await fetch(`${BASE}/fonts/bulk-tags`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, tags }),
+  });
+  return json<{ updated: number }>(res);
+}
+
+export async function fetchAllTags(): Promise<string[]> {
+  const res = await fetch(`${BASE}/tags`);
+  const data = await json<{ tags: string[] }>(res);
+  return data.tags;
 }
 
 // --- Google Fonts ---

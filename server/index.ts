@@ -199,13 +199,12 @@ app.post('/api/database/dedup', (_req, res) => {
   res.json({ removed: discardedIds.length, total: fonts.length });
 });
 
-// Retroactively compute metrics for fonts that don't have them
+// Retroactively compute metrics and reclassify all fonts
 app.post('/api/database/compute-metrics', (_req, res) => {
   const db = readDatabase();
   let updated = 0;
 
   for (const font of db.fonts) {
-    if (font.metrics && font.category) continue;
     const base64Data = readFontData(font.id);
     if (!base64Data) continue;
 
@@ -410,6 +409,88 @@ app.post('/api/google-fonts/download', async (req, res) => {
   }
 
   res.end();
+});
+
+// --- Category override & tags ---
+
+app.put('/api/fonts/:id/category', (req, res) => {
+  const { category } = req.body;
+  const validCats = ['serif', 'sans-serif', 'monospace', 'display', 'script'];
+  if (!category || !validCats.includes(category)) {
+    res.status(400).json({ error: 'Valid category is required' });
+    return;
+  }
+  const db = readDatabase();
+  const font = db.fonts.find((f) => f.id === req.params.id);
+  if (!font) { res.status(404).json({ error: 'Font not found' }); return; }
+  font.categoryOverride = category;
+  writeDatabase(db);
+  res.json({ ok: true });
+});
+
+app.put('/api/fonts/bulk-category', (req, res) => {
+  const { ids, category } = req.body;
+  const validCats = ['serif', 'sans-serif', 'monospace', 'display', 'script'];
+  if (!Array.isArray(ids) || !category || !validCats.includes(category)) {
+    res.status(400).json({ error: 'ids (array) and valid category are required' });
+    return;
+  }
+  const db = readDatabase();
+  const idSet = new Set(ids as string[]);
+  let updated = 0;
+  for (const font of db.fonts) {
+    if (idSet.has(font.id)) {
+      font.categoryOverride = category;
+      updated++;
+    }
+  }
+  writeDatabase(db);
+  res.json({ updated });
+});
+
+app.put('/api/fonts/:id/tags', (req, res) => {
+  const { tags } = req.body;
+  if (!Array.isArray(tags)) {
+    res.status(400).json({ error: 'tags (array of strings) is required' });
+    return;
+  }
+  const db = readDatabase();
+  const font = db.fonts.find((f) => f.id === req.params.id);
+  if (!font) { res.status(404).json({ error: 'Font not found' }); return; }
+  font.tags = tags.filter((t: unknown) => typeof t === 'string' && t.length > 0);
+  writeDatabase(db);
+  res.json({ ok: true, tags: font.tags });
+});
+
+app.put('/api/fonts/bulk-tags', (req, res) => {
+  const { ids, tags } = req.body;
+  if (!Array.isArray(ids) || !Array.isArray(tags)) {
+    res.status(400).json({ error: 'ids (array) and tags (array) are required' });
+    return;
+  }
+  const cleanTags = tags.filter((t: unknown) => typeof t === 'string' && t.length > 0);
+  const db = readDatabase();
+  const idSet = new Set(ids as string[]);
+  let updated = 0;
+  for (const font of db.fonts) {
+    if (idSet.has(font.id)) {
+      const existing = new Set(font.tags ?? []);
+      for (const t of cleanTags) existing.add(t);
+      font.tags = Array.from(existing);
+      updated++;
+    }
+  }
+  writeDatabase(db);
+  res.json({ updated });
+});
+
+app.get('/api/tags', (_req, res) => {
+  const db = readDatabase();
+  const tagSet = new Set<string>();
+  for (const font of db.fonts) {
+    if (font.tags) for (const t of font.tags) tagSet.add(t);
+  }
+  res.json({ tags: Array.from(tagSet).sort() });
 });
 
 // --- Saved font folder paths ---

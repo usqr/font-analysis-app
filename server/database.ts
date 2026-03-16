@@ -30,6 +30,8 @@ export interface StoredFont {
   addedAt: string;
   metrics?: FontMetrics;
   category?: FontCategory;
+  categoryOverride?: FontCategory;
+  tags?: string[];
   source?: FontSource;
 }
 

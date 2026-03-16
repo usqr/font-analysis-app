@@ -116,6 +116,8 @@ export interface StoredFontMeta {
   addedAt: string;
   metrics?: FontMetrics;
   category?: FontCategory;
+  categoryOverride?: FontCategory;
+  tags?: string[];
   source?: FontSource;
 }
 

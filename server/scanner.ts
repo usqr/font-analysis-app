@@ -151,7 +151,6 @@ function parseAbbreviatedSubfamily(diff: string): { subfamilyName: string; style
  */
 function inferPreferredFamily(familyName: string): { preferredFamily: string; diff: string } | null {
   const expanded = splitCamelTokens(familyName);
-  if (expanded === familyName) return null;
 
   const tokens = expanded.split(/\s+/);
   if (tokens.length < 2) return null;
@@ -165,6 +164,10 @@ function inferPreferredFamily(familyName: string): { preferredFamily: string; di
       break;
     }
   }
+
+  // For already-space-separated names (CamelCase splitting had no effect),
+  // only infer a preferredFamily when trailing tokens were actually stripped
+  if (expanded === familyName && lastBase === tokens.length) return null;
 
   const baseParts = tokens.slice(0, lastBase);
   const diffParts = tokens.slice(lastBase);
@@ -378,21 +381,44 @@ function detectSerifFromGlyph(font: opentype.Font): 'serif' | 'sans-serif' | nul
   return null;
 }
 
+const STRONG_NAME_PATTERNS: { pattern: RegExp; category: FontCategory }[] = [
+  { pattern: /(?<!\w)serif\b/i, category: 'serif' },
+  { pattern: /\b(slab)\b/i, category: 'serif' },
+  { pattern: /\b(bodoni|garamond|baskerville|didot|caslon|palatino|bookman)\b/i, category: 'serif' },
+  { pattern: /\b(script|handwrit|brush|calligraph)\b/i, category: 'script' },
+  { pattern: /\b(display|stencil|shadow|shadowed|inline|outline|awesome|icon|bitmap|pixel|color)\b/i, category: 'display' },
+];
+
 const NAME_CATEGORY_PATTERNS: { pattern: RegExp; category: FontCategory }[] = [
   { pattern: /\b(script|handwrit|hand|brush|calligraph)\b/i, category: 'script' },
   { pattern: /\b(mono|monospace|code|console|terminal)\b/i, category: 'monospace' },
   { pattern: /\b(display|decorat|ornament|poster|stencil)\b/i, category: 'display' },
+  { pattern: /(?<!\w)serif\b/i, category: 'serif' },
   { pattern: /\bsans\b/i, category: 'sans-serif' },
 ];
 
-function classifyByName(font: opentype.Font): FontCategory | null {
+function getFontNameCandidates(font: opentype.Font): string {
   const names = font.names as any;
-  const candidates = [
+  return [
     names?.fontFamily?.en,
     names?.preferredFamily?.en,
     names?.fontSubfamily?.en,
     names?.preferredSubfamily?.en,
   ].filter(Boolean).join(' ');
+}
+
+function classifyByStrongName(font: opentype.Font): FontCategory | null {
+  const candidates = getFontNameCandidates(font);
+  if (!candidates) return null;
+  if (/\bsans\b/i.test(candidates)) return null;
+  for (const { pattern, category } of STRONG_NAME_PATTERNS) {
+    if (pattern.test(candidates)) return category;
+  }
+  return null;
+}
+
+function classifyByName(font: opentype.Font): FontCategory | null {
+  const candidates = getFontNameCandidates(font);
   if (!candidates) return null;
   for (const { pattern, category } of NAME_CATEGORY_PATTERNS) {
     if (pattern.test(candidates)) return category;
@@ -404,6 +430,9 @@ export function classifyFont(font: opentype.Font, metrics?: FontMetrics | null):
   const post = font.tables.post as any;
   if (post?.isFixedPitch) return 'monospace';
   if (isMonoByWidths(font)) return 'monospace';
+
+  const strongName = classifyByStrongName(font);
+  if (strongName) return strongName;
 
   const os2 = font.tables.os2 as any;
 

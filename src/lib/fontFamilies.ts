@@ -3,6 +3,7 @@ import {
   WEIGHT_TOKENS,
   STYLE_TOKENS,
   WIDTH_TOKENS,
+  TYPE_TOKENS,
   extractTrailingWidth,
   extractTrailingType,
   stripTrailingQualifiers,
@@ -60,11 +61,19 @@ export function widthQualifier(font: StoredFontMeta): string {
   if (!groupName || groupName === font.familyName) return '';
   const diff = computeFamilyDiff(font.familyName, groupName);
   if (!diff) return '';
-  const tokens = diff.split(/\s+/).filter((t) => t.length > 0);
-  const allRecognized = tokens.every(
-    (t) => WEIGHT_TOKENS.has(t) || STYLE_TOKENS.has(t) || WIDTH_TOKENS.has(t),
-  );
-  if (!allRecognized) return '';
+
+  const rawTokens = diff.split(/\s+/).filter((t) => t.length > 0);
+  const isKnown = (t: string) => WEIGHT_TOKENS.has(t) || STYLE_TOKENS.has(t) || WIDTH_TOKENS.has(t) || TYPE_TOKENS.has(t);
+  const tokens: string[] = [];
+  for (let i = 0; i < rawTokens.length; i++) {
+    if (i + 1 < rawTokens.length) {
+      const compound = rawTokens[i] + ' ' + rawTokens[i + 1];
+      if (isKnown(compound)) { tokens.push(compound); i++; continue; }
+    }
+    tokens.push(rawTokens[i]);
+  }
+
+  if (!tokens.every(isKnown)) return '';
   const remaining = tokens.filter(
     (t) => !WEIGHT_TOKENS.has(t) && !STYLE_TOKENS.has(t),
   );

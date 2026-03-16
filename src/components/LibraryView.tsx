@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { StoredFontMeta, FontFamily, FontCategory } from '../types';
 import type { ScanEvent, ScanProgressUpdate } from '../lib/api';
-import { fetchDatabase, scanFolderStream, pickFolder, deleteFont, refreshFont, updateFontPath, clearDatabase, deduplicateDatabase, computeMetrics, downloadGoogleFonts as downloadGFonts, toggleStarFamily, fetchFontPaths, addFontPath, removeFontPath } from '../lib/api';
+import { fetchDatabase, scanFolderStream, pickFolder, deleteFont, refreshFont, updateFontPath, clearDatabase, deduplicateDatabase, computeMetrics, downloadGoogleFonts as downloadGFonts, toggleStarFamily, fetchFontPaths, addFontPath, removeFontPath, bulkSetCategory, bulkSetTags, fetchAllTags } from '../lib/api';
 import type { GoogleDownloadEvent } from '../lib/api';
 import { groupByFamily, variantLabel, groupByWidth, familyKey, type WidthStyleGroup } from '../lib/fontFamilies';
 import { useFontFace } from '../lib/useFontFace';
@@ -65,6 +65,9 @@ export function LibraryView() {
   const starredRef = useRef(starredSet);
   starredRef.current = starredSet;
   const [savedPaths, setSavedPaths] = useState<string[]>([]);
+  const [bulkEditMode, setBulkEditMode] = useState(false);
+  const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
+  const [allTags, setAllTags] = useState<string[]>([]);
 
   const loadDatabase = useCallback(async () => {
     try {
@@ -84,6 +87,7 @@ export function LibraryView() {
   useEffect(() => {
     loadDatabase();
     fetchFontPaths().then(setSavedPaths).catch(() => {});
+    fetchAllTags().then(setAllTags).catch(() => {});
   }, [loadDatabase]);
 
   useEffect(() => {
@@ -262,6 +266,74 @@ export function LibraryView() {
     navigate(`/compare?ids=${ids.join(',')}`);
   }, [selected, navigate]);
 
+  const handleBulkCategory = useCallback(async (cat: FontCategory) => {
+    const familyNames = bulkSelected;
+    const fontIds = families
+      .filter((f) => familyNames.has(f.familyName))
+      .flatMap((f) => f.fonts.map((v) => v.id));
+    if (fontIds.length === 0) return;
+    try {
+      await bulkSetCategory(fontIds, cat);
+      setAllFonts((prev) => {
+        const idSet = new Set(fontIds);
+        const next = prev.map((f) => idSet.has(f.id) ? { ...f, categoryOverride: cat } : f);
+        setFamilies(groupByFamily(next, starredRef.current));
+        return next;
+      });
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }, [bulkSelected, families]);
+
+  const handleBulkTags = useCallback(async (tags: string[]) => {
+    const familyNames = bulkSelected;
+    const fontIds = families
+      .filter((f) => familyNames.has(f.familyName))
+      .flatMap((f) => f.fonts.map((v) => v.id));
+    if (fontIds.length === 0) return;
+    try {
+      await bulkSetTags(fontIds, tags);
+      setAllFonts((prev) => {
+        const idSet = new Set(fontIds);
+        const next = prev.map((f) => {
+          if (!idSet.has(f.id)) return f;
+          const existing = new Set(f.tags ?? []);
+          for (const t of tags) existing.add(t);
+          return { ...f, tags: Array.from(existing) };
+        });
+        setFamilies(groupByFamily(next, starredRef.current));
+        return next;
+      });
+      fetchAllTags().then(setAllTags).catch(() => {});
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }, [bulkSelected, families]);
+
+  const handleFamilyCategoryOverride = useCallback(async (family: FontFamily, cat: FontCategory) => {
+    const fontIds = family.fonts.map((f) => f.id);
+    try {
+      await bulkSetCategory(fontIds, cat);
+      setAllFonts((prev) => {
+        const idSet = new Set(fontIds);
+        const next = prev.map((f) => idSet.has(f.id) ? { ...f, categoryOverride: cat } : f);
+        setFamilies(groupByFamily(next, starredRef.current));
+        return next;
+      });
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }, []);
+
+  const toggleBulkSelect = useCallback((familyName: string) => {
+    setBulkSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(familyName)) next.delete(familyName);
+      else next.add(familyName);
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     scanLogRef.current?.scrollTo({ top: scanLogRef.current.scrollHeight });
   }, [scanLog]);
@@ -271,7 +343,7 @@ export function LibraryView() {
     for (const fam of families) {
       const regular = fam.fonts.find((f) => f.weight >= 380 && f.weight <= 420 && f.style === 'normal')
         ?? fam.fonts.find((f) => f.style === 'normal') ?? fam.fonts[0];
-      map.set(fam.familyName, { metrics: regular?.metrics, category: regular?.category });
+      map.set(fam.familyName, { metrics: regular?.metrics, category: regular?.categoryOverride ?? regular?.category });
     }
     return map;
   }, [families]);
@@ -540,6 +612,18 @@ export function LibraryView() {
               Expand All
             </button>
           </>
+        )}
+        {allFonts.length > 0 && (
+          <button
+            onClick={() => { setBulkEditMode((v) => !v); if (bulkEditMode) setBulkSelected(new Set()); }}
+            className={`rounded-md border px-4 py-1.5 text-sm font-medium transition-colors ${
+              bulkEditMode
+                ? 'border-orange-500 bg-orange-500/10 text-orange-400'
+                : 'border-neutral-600 text-neutral-300 hover:bg-neutral-800 hover:text-white'
+            }`}
+          >
+            {bulkEditMode ? 'Exit Bulk Edit' : 'Bulk Edit'}
+          </button>
         )}
         {selected.size >= 2 && (
           <button
@@ -965,14 +1049,29 @@ export function LibraryView() {
                 onEditPath={(id, path) => setEditingPath({ id, path })}
                 globalState={globalCardState}
                 globalVersion={globalCardVersion}
+                onCategoryOverride={handleFamilyCategoryOverride}
+                bulkEditMode={bulkEditMode}
+                bulkSelected={bulkSelected.has(family.familyName)}
+                onBulkToggle={toggleBulkSelect}
               />
             ))}
           </div>
         )}
       </div>
 
+      {/* Floating bulk edit bar */}
+      {bulkEditMode && bulkSelected.size > 0 && (
+        <BulkEditBar
+          count={bulkSelected.size}
+          allTags={allTags}
+          onSetCategory={handleBulkCategory}
+          onAddTags={handleBulkTags}
+          onClear={() => setBulkSelected(new Set())}
+        />
+      )}
+
       {/* Floating compare tray */}
-      {selected.size > 0 && (
+      {!bulkEditMode && selected.size > 0 && (
         <CompareTray
           selected={selected}
           allFonts={allFonts}
@@ -981,6 +1080,111 @@ export function LibraryView() {
           onCompare={handleCompare}
         />
       )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Floating Bulk Edit Bar                                             */
+/* ------------------------------------------------------------------ */
+
+function BulkEditBar({
+  count,
+  allTags,
+  onSetCategory,
+  onAddTags,
+  onClear,
+}: {
+  count: number;
+  allTags: string[];
+  onSetCategory: (cat: FontCategory) => void;
+  onAddTags: (tags: string[]) => void;
+  onClear: () => void;
+}) {
+  const [tagInput, setTagInput] = useState('');
+  const [showTagSuggestions, setShowTagSuggestions] = useState(false);
+  const tagInputRef = useRef<HTMLInputElement>(null);
+
+  const suggestions = useMemo(() => {
+    if (!tagInput.trim()) return [];
+    const q = tagInput.toLowerCase().trim();
+    return allTags.filter((t) => t.toLowerCase().includes(q) && t.toLowerCase() !== q).slice(0, 8);
+  }, [tagInput, allTags]);
+
+  const handleAddTags = () => {
+    const tags = tagInput.split(',').map((t) => t.trim()).filter(Boolean);
+    if (tags.length === 0) return;
+    onAddTags(tags);
+    setTagInput('');
+  };
+
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-orange-500/30 bg-neutral-900/95 px-4 py-3 shadow-2xl backdrop-blur-sm">
+      <div className="mx-auto flex max-w-7xl items-center gap-4">
+        <span className="shrink-0 text-xs font-medium text-orange-400">
+          {count} {count === 1 ? 'family' : 'families'} selected
+        </span>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-neutral-500">Category:</span>
+          <select
+            onChange={(e) => { if (e.target.value) onSetCategory(e.target.value as FontCategory); e.target.value = ''; }}
+            defaultValue=""
+            className="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-200 outline-none focus:border-blue-500"
+          >
+            <option value="" disabled>Choose...</option>
+            {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+          </select>
+        </div>
+
+        <div className="relative flex items-center gap-2">
+          <span className="text-xs text-neutral-500">Tags:</span>
+          <input
+            ref={tagInputRef}
+            type="text"
+            value={tagInput}
+            onChange={(e) => { setTagInput(e.target.value); setShowTagSuggestions(true); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleAddTags(); }}
+            onFocus={() => setShowTagSuggestions(true)}
+            onBlur={() => setTimeout(() => setShowTagSuggestions(false), 200)}
+            placeholder="Add tags (comma-separated)"
+            className="w-48 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-200 placeholder-neutral-500 outline-none focus:border-blue-500"
+          />
+          <button
+            onClick={handleAddTags}
+            disabled={!tagInput.trim()}
+            className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
+          >
+            Add
+          </button>
+          {showTagSuggestions && suggestions.length > 0 && (
+            <div className="absolute bottom-full left-10 mb-1 w-48 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-xl">
+              {suggestions.map((tag) => (
+                <button
+                  key={tag}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setTagInput(tag);
+                    setShowTagSuggestions(false);
+                  }}
+                  className="block w-full px-3 py-1 text-left text-xs text-neutral-300 hover:bg-neutral-800"
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="ml-auto">
+          <button
+            onClick={onClear}
+            className="rounded-md px-3 py-1.5 text-xs text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white"
+          >
+            Clear Selection
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1096,6 +1300,10 @@ interface FamilyCardProps {
   onEditPath: (id: string, currentPath: string) => void;
   globalState: CardState | null;
   globalVersion: number;
+  onCategoryOverride?: (family: FontFamily, cat: FontCategory) => void;
+  bulkEditMode?: boolean;
+  bulkSelected?: boolean;
+  onBulkToggle?: (familyName: string) => void;
 }
 
 function FamilyCard({
@@ -1109,14 +1317,31 @@ function FamilyCard({
   onEditPath,
   globalState,
   globalVersion,
+  onCategoryOverride,
+  bulkEditMode,
+  bulkSelected,
+  onBulkToggle,
 }: FamilyCardProps) {
   const [cardState, setCardState] = useState<CardState>('normal');
   const [activeWidth, setActiveWidth] = useState<string>('');
   const [showItalic, setShowItalic] = useState(false);
+  const [showCatPopover, setShowCatPopover] = useState(false);
+  const catPopoverRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (globalState) setCardState(globalState);
   }, [globalState, globalVersion]);
+
+  useEffect(() => {
+    if (!showCatPopover) return;
+    const handler = (e: MouseEvent) => {
+      if (catPopoverRef.current && !catPopoverRef.current.contains(e.target as Node)) {
+        setShowCatPopover(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showCatPopover]);
 
   const widthGroups = useMemo(() => groupByWidth(family.fonts), [family.fonts]);
   const widthKeys = useMemo(() => Array.from(widthGroups.keys()), [widthGroups]);
@@ -1134,14 +1359,31 @@ function FamilyCard({
   const hasNormals = currentGroup.normal.length > 0;
   const displayedFonts = showItalic && hasItalics ? currentGroup.italic : currentGroup.normal;
 
+  const effectiveCategory = family.fonts[0]?.categoryOverride ?? family.fonts[0]?.category;
+  const CAT_COLORS: Record<string, string> = {
+    'serif': 'bg-rose-500/15 text-rose-400 border-rose-500/30',
+    'sans-serif': 'bg-sky-500/15 text-sky-400 border-sky-500/30',
+    'monospace': 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+    'display': 'bg-purple-500/15 text-purple-400 border-purple-500/30',
+    'script': 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+  };
+
   const toggleCardState = () => {
     setCardState((s) => (s === 'collapsed' ? 'normal' : 'collapsed'));
   };
 
   return (
-    <div className="rounded-lg border border-neutral-800 bg-neutral-900" data-testid="family-card">
+    <div className={`rounded-lg border bg-neutral-900 ${bulkSelected ? 'border-orange-500' : 'border-neutral-800'}`} data-testid="family-card">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2">
+        {bulkEditMode && (
+          <input
+            type="checkbox"
+            checked={bulkSelected ?? false}
+            onChange={() => onBulkToggle?.(family.familyName)}
+            className="mr-2 h-3.5 w-3.5 shrink-0 rounded border-neutral-600 bg-neutral-800 accent-orange-500"
+          />
+        )}
         <button
           onClick={toggleCardState}
           className="min-w-0 flex-1 text-left"
@@ -1157,16 +1399,53 @@ function FamilyCard({
             {family.fonts.length} variant{family.fonts.length !== 1 ? 's' : ''}
           </p>
         </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); onToggleStar(family); }}
-          className="shrink-0 text-sm leading-none transition-colors"
-          title={family.starred ? 'Unstar family' : 'Star family'}
-        >
-          {family.starred
-            ? <span className="text-amber-400">&#9733;</span>
-            : <span className="text-neutral-700 hover:text-amber-400/60">&#9734;</span>}
-        </button>
-        <SourceBadge source={family.fonts[0]?.source} />
+        <div className="relative flex items-center gap-1">
+          {effectiveCategory && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowCatPopover((v) => !v); }}
+              className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${CAT_COLORS[effectiveCategory] ?? 'bg-neutral-700/50 text-neutral-500 border-neutral-700'}`}
+              title={`Category: ${effectiveCategory}${family.fonts[0]?.categoryOverride ? ' (override)' : ''}`}
+            >
+              {effectiveCategory}
+            </button>
+          )}
+          {showCatPopover && (
+            <div
+              ref={catPopoverRef}
+              className="absolute right-0 top-7 z-30 w-36 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-xl"
+            >
+              <div className="border-b border-neutral-800 px-3 py-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Set Category</span>
+              </div>
+              {CATEGORIES.map((cat) => (
+                <button
+                  key={cat.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCategoryOverride?.(family, cat.id);
+                    setShowCatPopover(false);
+                  }}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-neutral-800 ${
+                    effectiveCategory === cat.id ? 'text-blue-400' : 'text-neutral-300'
+                  }`}
+                >
+                  {effectiveCategory === cat.id && <span className="text-blue-400">&#10003;</span>}
+                  <span className={effectiveCategory === cat.id ? '' : 'ml-5'}>{cat.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleStar(family); }}
+            className="shrink-0 text-sm leading-none transition-colors"
+            title={family.starred ? 'Unstar family' : 'Star family'}
+          >
+            {family.starred
+              ? <span className="text-amber-400">&#9733;</span>
+              : <span className="text-neutral-700 hover:text-amber-400/60">&#9734;</span>}
+          </button>
+          <SourceBadge source={family.fonts[0]?.source} />
+        </div>
         {cardState !== 'collapsed' && (
           <button
             onClick={() => setCardState((s) => (s === 'expanded' ? 'normal' : 'expanded'))}

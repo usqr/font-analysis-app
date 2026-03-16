@@ -42,14 +42,15 @@ export const STYLE_TOKENS = new Set(['Italic', 'Oblique', 'It', 'Obl']);
 export const WIDTH_TOKENS = new Set([
   'Condensed', 'Narrow', 'Wide', 'Expanded', 'Compressed', 'SemiCondensed',
   'Nar', 'Con', 'Wid', 'Exp', 'Com', 'Cnd',
+  'Cond', 'SemiCond', 'Comp',
 ]);
 
 export const TRAILING_WIDTH_NAMES = [
   'Ultra Condensed', 'UltraCondensed',
   'Extra Condensed', 'ExtraCondensed',
-  'Semi Condensed', 'SemiCondensed',
-  'Condensed',
-  'Compressed',
+  'Semi Condensed', 'SemiCondensed', 'SemiCond', 'Semi Cond',
+  'Condensed', 'Cond',
+  'Compressed', 'Comp',
   'Extra Narrow', 'ExtraNarrow',
   'Narrow',
   'Semi Expanded', 'SemiExpanded',
@@ -61,13 +62,18 @@ export const TRAILING_WIDTH_NAMES = [
 ];
 
 /**
- * Alfabet-style variant suffixes treated as type qualifiers (like widths).
- * Fonts like "Alfabet Szkolny Liniowy" and "Alfabet Szkolny Kontury" will
- * group under "Alfabet Szkolny" with type tabs.
+ * Variant suffixes treated as type qualifiers (like widths).
+ * Used for grouping visual variants under one super-family with tabs.
+ * Includes Alfabet-style type names, Bungee visual variants, and generic style variants.
+ * Order matters: longer compound names must precede shorter ones.
  */
 export const TRAILING_TYPE_NAMES = [
   'Liniowy', 'Kontury', 'Cieniowany', 'Kropki', 'Pisany',
+  'Kratki', 'Linie', 'Litery', 'Strzalki',
+  'Layers Rotated', 'Layers', 'Inline', 'Outline', 'Shade', 'Color', 'Shadow',
 ];
+
+export const TYPE_TOKENS = new Set(TRAILING_TYPE_NAMES);
 
 export function splitCamelTokens(s: string): string {
   return s
