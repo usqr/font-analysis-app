@@ -378,7 +378,7 @@ app.put('/api/fonts/:id/refresh', async (req, res) => {
 app.put('/api/starred-families', (req, res) => {
   const { key } = req.body;
   if (!key || typeof key !== 'string') {
-    res.status(400).json({ error: 'key is required (source:familyName)' });
+    res.status(400).json({ error: 'key is required (familyName)' });
     return;
   }
   const db = readDatabase();

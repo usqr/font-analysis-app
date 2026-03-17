@@ -141,6 +141,7 @@ export interface FontFamily {
   familyName: string;
   fonts: StoredFontMeta[];
   source?: FontSource;
+  sources?: FontSource[];
   starred?: boolean;
 }
 

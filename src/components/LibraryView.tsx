@@ -71,10 +71,14 @@ export function LibraryView() {
     try {
       setLoading(true);
       const db = await fetchDatabase();
-      const starred = new Set(db.starredFamilies ?? []);
-      setStarredSet(starred);
+      const raw = db.starredFamilies ?? [];
+      const migrated = new Set(raw.map((k) => {
+        const colon = k.indexOf(':');
+        return colon >= 0 && (k.startsWith('local:') || k.startsWith('google:')) ? k.slice(colon + 1) : k;
+      }));
+      setStarredSet(migrated);
       setAllFonts(db.fonts);
-      setFamilies(groupByFamily(db.fonts, starred));
+      setFamilies(groupByFamily(db.fonts, migrated));
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -239,12 +243,12 @@ export function LibraryView() {
   }, []);
 
   const handleToggleStarFamily = useCallback(async (fam: FontFamily) => {
-    const key = familyKey(fam.source ?? 'local', fam.familyName);
+    const key = familyKey(fam.familyName);
     const newSet = new Set(starredRef.current);
     if (newSet.has(key)) newSet.delete(key); else newSet.add(key);
     setStarredSet(newSet);
     setFamilies((prev) => prev.map((f) =>
-      f.familyName === fam.familyName && f.source === fam.source ? { ...f, starred: newSet.has(key) } : f,
+      f.familyName === fam.familyName ? { ...f, starred: newSet.has(key) } : f,
     ));
     try {
       await toggleStarFamily(key);
@@ -253,7 +257,7 @@ export function LibraryView() {
       if (revert.has(key)) revert.delete(key); else revert.add(key);
       setStarredSet(revert);
       setFamilies((prev) => prev.map((f) =>
-        f.familyName === fam.familyName && f.source === fam.source ? { ...f, starred: revert.has(key) } : f,
+        f.familyName === fam.familyName ? { ...f, starred: revert.has(key) } : f,
       ));
     }
   }, []);
@@ -381,7 +385,7 @@ export function LibraryView() {
   const searchAndCatFiltered = useMemo(() => {
     let result = families;
     if (selectedSource) {
-      result = result.filter((f) => (f.source ?? 'local') === selectedSource);
+      result = result.filter((f) => f.sources?.includes(selectedSource) ?? (f.source ?? 'local') === selectedSource);
     }
     if (showStarredOnly) {
       result = result.filter((f) => f.starred);
@@ -618,7 +622,9 @@ export function LibraryView() {
           </button>
         )}
         <span className="ml-auto text-xs text-neutral-500">
-          {allFonts.length} fonts in {families.length} families
+          {filteredFamilies.length < families.length
+            ? <>{filteredFamilies.reduce((s, f) => s + f.fonts.length, 0)} fonts in {filteredFamilies.length} families <span className="text-neutral-600">of {allFonts.length} total</span></>
+            : <>{allFonts.length} fonts in {families.length} families</>}
         </span>
       </div>
 
@@ -1007,11 +1013,15 @@ export function LibraryView() {
                 </p>
               </>
             ) : (
-              <p className="text-lg">No families match &quot;{search}&quot;</p>
+              <p className="text-lg">
+                {search.trim()
+                  ? <>No families match &quot;{search}&quot;{(selectedCategory || selectedSource || showStarredOnly || showAdvancedFilters) ? ' with the current filters' : ''}</>
+                  : 'No families match the current filters'}
+              </p>
             )}
           </div>
         ) : viewMode === 'grid' ? (
-          <div className="grid gap-4 justify-center" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 210px))' }} data-testid="grid-view">
+          <div className="grid w-full gap-4 justify-center" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 210px))' }} data-testid="grid-view">
             {filteredFamilies.map((family) => (
               <GridFamilyCard
                 key={family.familyName}
@@ -1257,7 +1267,18 @@ function CompareTray({
 /*  Source Badge                                                       */
 /* ------------------------------------------------------------------ */
 
-function SourceBadge({ source }: { source?: string }) {
+function SourceBadge({ source, sources }: { source?: string; sources?: string[] }) {
+  const hasBoth = sources && sources.includes('local') && sources.includes('google');
+  if (hasBoth) {
+    return (
+      <span
+        className="inline-flex h-5 items-center justify-center rounded-full bg-purple-500/15 px-1 text-[10px] font-bold text-purple-400"
+        title="Local + Google Fonts"
+      >
+        L+G
+      </span>
+    );
+  }
   if (source === 'google') {
     return (
       <span
@@ -1437,7 +1458,7 @@ function FamilyCard({
               ? <span className="text-amber-400">&#9733;</span>
               : <span className="text-neutral-700 hover:text-amber-400/60">&#9734;</span>}
           </button>
-          <SourceBadge source={family.fonts[0]?.source} />
+          <SourceBadge source={family.source} sources={family.sources} />
         </div>
         {cardState !== 'collapsed' && (
           <button
@@ -1711,7 +1732,7 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
         >
           {anySelected ? selected.size : '+'}
         </button>
-        <SourceBadge source={previewFont.source} />
+        <SourceBadge source={family.source} sources={family.sources} />
       </div>
 
       {showVariants && (

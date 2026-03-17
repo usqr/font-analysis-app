@@ -119,29 +119,30 @@ export function groupByWidth(fonts: StoredFontMeta[]): Map<string, WidthStyleGro
   return map;
 }
 
-export function familyKey(source: string, familyName: string): string {
-  return `${source}:${familyName}`;
+export function familyKey(familyName: string): string {
+  return familyName;
 }
 
 export function groupByFamily(fonts: StoredFontMeta[], starredFamilies?: Set<string>): FontFamily[] {
   const map = new Map<string, StoredFontMeta[]>();
 
   for (const font of fonts) {
-    const src = font.source ?? 'local';
-    const key = `${src}\0${superFamilyName(font)}`;
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(font);
+    const name = superFamilyName(font);
+    if (!map.has(name)) map.set(name, []);
+    map.get(name)!.push(font);
   }
 
   const families: FontFamily[] = [];
-  for (const [key, members] of map) {
-    const [src, name] = key.split('\0');
+  for (const [name, members] of map) {
     members.sort((a, b) => {
       if (a.weight !== b.weight) return a.weight - b.weight;
       return a.style.localeCompare(b.style);
     });
-    const fKey = familyKey(src, name);
-    families.push({ familyName: name, fonts: members, source: src as FontSource, starred: starredFamilies?.has(fKey) });
+    const sourcesSet = new Set(members.map((f) => f.source ?? 'local' as FontSource));
+    const sources = Array.from(sourcesSet) as FontSource[];
+    const dominantSource = sources.includes('local') ? 'local' as FontSource : sources[0];
+    const fKey = familyKey(name);
+    families.push({ familyName: name, fonts: members, source: dominantSource, sources, starred: starredFamilies?.has(fKey) });
   }
 
   families.sort((a, b) => a.familyName.localeCompare(b.familyName));

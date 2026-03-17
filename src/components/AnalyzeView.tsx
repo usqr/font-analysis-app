@@ -260,10 +260,9 @@ export function AnalyzeView() {
           setCurrentMeta(current);
           setEffectiveCategory(current.categoryOverride ?? current.category ?? null);
           const baseKey = superFamilyName(current);
-          const currentSource = current.source ?? 'local';
-          const members = db.fonts.filter((f) => superFamilyName(f) === baseKey && (f.source ?? 'local') === currentSource);
+          const members = db.fonts.filter((f) => superFamilyName(f) === baseKey);
           setFamilyMembers(members);
-          const fKey = familyKey(currentSource, baseKey);
+          const fKey = familyKey(baseKey);
           setFamilyStarKey(fKey);
           setFamilyStarred((db.starredFamilies ?? []).includes(fKey));
         }

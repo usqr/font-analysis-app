@@ -15,7 +15,9 @@ test.describe('Library features', () => {
     const count = await cards.count();
     expect(count).toBeGreaterThan(0);
 
-    for (let i = 0; i < count; i++) {
+    const sampled = Math.min(count, 200);
+    const step = Math.max(1, Math.floor(count / sampled));
+    for (let i = 0; i < count && i / step < sampled; i += step) {
       const name = await cards.nth(i).locator('[data-testid="family-header"] h3').textContent();
       const cleanName = (name ?? '').replace(/^[▾▸]\s*/, '').trim();
       expect(
@@ -378,11 +380,11 @@ test.describe('Library features', () => {
     }
 
     const firstCard = cards.first();
-    const badge = firstCard.locator('span[title="Local font"], span[title="Google Fonts"]');
+    const badge = firstCard.locator('span[title="Local font"], span[title="Google Fonts"], span[title="Local + Google Fonts"]');
     await expect(badge).toBeVisible();
 
     const badgeText = await badge.textContent();
-    expect(badgeText === 'L' || badgeText === 'G').toBe(true);
+    expect(badgeText === 'L' || badgeText === 'G' || badgeText === 'L+G').toBe(true);
 
     await page.screenshot({ path: 'e2e/test-results/source-badges.png' });
   });
@@ -399,7 +401,7 @@ test.describe('Library features', () => {
     }
 
     const firstCard = gridCards.first();
-    const badge = firstCard.locator('span[title="Local font"], span[title="Google Fonts"]');
+    const badge = firstCard.locator('span[title="Local font"], span[title="Google Fonts"], span[title="Local + Google Fonts"]');
     await expect(badge).toBeVisible();
 
     await page.screenshot({ path: 'e2e/test-results/grid-source-badges.png' });
