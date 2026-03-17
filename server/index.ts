@@ -11,7 +11,6 @@ import {
   readGoogleFontsDb, findFontById,
 } from './database.js';
 import { scanFolder, scanFont, walkDir, computeFontMetrics, classifyFont, extractGlyphSvgs } from './scanner.js';
-import { listGoogleFonts, downloadGoogleFonts } from './googleFonts.js';
 
 const app = express();
 const PORT = 3001;
@@ -400,51 +399,6 @@ app.delete('/api/fonts/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// Google Fonts: list available fonts
-app.get('/api/google-fonts/list', async (_req, res) => {
-  try {
-    const fonts = await listGoogleFonts();
-    res.json({ fonts, total: fonts.length });
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Google Fonts: download fonts to a folder (NDJSON streaming)
-app.post('/api/google-fonts/download', async (req, res) => {
-  const { targetFolder, families } = req.body;
-  if (!targetFolder || typeof targetFolder !== 'string') {
-    res.status(400).json({ error: 'targetFolder is required' });
-    return;
-  }
-
-  res.setHeader('Content-Type', 'application/x-ndjson');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('X-Accel-Buffering', 'no');
-
-  const write = (obj: Record<string, unknown>) => {
-    res.write(JSON.stringify(obj) + '\n');
-  };
-
-  try {
-    let familyNames: string[];
-    if (Array.isArray(families) && families.length > 0) {
-      familyNames = families;
-    } else {
-      const allFonts = await listGoogleFonts();
-      familyNames = allFonts.map((f) => f.family);
-    }
-
-    await downloadGoogleFonts(targetFolder, familyNames, (progress) => {
-      write(progress as unknown as Record<string, unknown>);
-    });
-  } catch (e: any) {
-    write({ type: 'error', error: e.message });
-  }
-
-  res.end();
-});
-
 // --- Category override & tags ---
 
 app.put('/api/fonts/:id/category', (req, res) => {
@@ -472,16 +426,27 @@ app.put('/api/fonts/bulk-category', (req, res) => {
   }
   const db = readDatabase();
   const idSet = new Set(ids as string[]);
-  const changed: typeof db.fonts = [];
+  const changed: import('./database.js').StoredFont[] = [];
   let updated = 0;
   for (const font of db.fonts) {
     if (idSet.has(font.id)) {
       font.categoryOverride = category;
       changed.push(font);
       updated++;
+      idSet.delete(font.id);
     }
   }
   writeDatabase(db);
+  if (idSet.size > 0) {
+    const googleFonts = readGoogleFontsDb();
+    for (const gf of googleFonts) {
+      if (idSet.has(gf.id)) {
+        gf.categoryOverride = category;
+        changed.push(gf);
+        updated++;
+      }
+    }
+  }
   if (changed.length > 0) saveOverrides(changed);
   res.json({ updated });
 });

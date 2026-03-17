@@ -4,10 +4,10 @@ A desktop-oriented web app for scanning, storing, analyzing, and comparing font 
 
 ## Features
 
-- **Font Library** — Scan local folders or browse 3500+ Google Fonts from the included starter database. Fonts are served directly from disk (no base64 backups). Grid view uses pre-extracted SVG glyph vectors for instant "Aa" previews. Fonts are grouped by family with width tabs, style toggles, and collapsible cards. Star favourite font families and add to compare from either view.
+- **Font Library** — Scan local folders or browse 3500+ Google Fonts from the included starter database. Fonts are served directly from disk (no base64 backups). Grid view (default) uses pre-extracted SVG glyph vectors for instant "Aa" previews. Fonts are grouped by family with width tabs, style toggles, and collapsible cards (single toggle button). Star favourite font families and add to compare from either view.
 - **Filtering** — Source filter (Local/Google), category radio buttons (Serif, Sans-Serif, Monospace, Display, Script), starred-only filter, text search, and histogram-based range filters for contrast, weight, width, and x-height.
-- **Manual Recategorization** — Each family card shows a colored category badge; click to override the auto-detected category. Bulk Edit mode allows selecting multiple families and applying category changes or tags in batch via a floating action bar. Overrides persist in a separate `font-overrides.json` file, surviving library clears and full rescans.
-- **Analyze** — Per-font analysis views: stroke contrast (with reference lines matching x-height view), x-height, proportions, weight distribution, spacing, and a paginated glyph grid with web font rendering and OTF feature filtering. Sidebar shows OpenType features and raw metadata (name, OS/2, head, post tables).
+- **Manual Recategorization** — Each family card and the Analyze view header show a colored category badge; click to override the auto-detected category. Works for both local and Google Fonts. Bulk Edit mode allows selecting multiple families and applying category changes or tags in batch via a floating action bar. Overrides persist in a separate `font-overrides.json` file, surviving library clears and full rescans.
+- **Analyze** — Per-font analysis views: stroke contrast (with reference lines matching x-height view), x-height, proportions, weight distribution, spacing, and a paginated glyph grid with web font rendering and OTF feature filtering. Lazy per-tab loading for fast initial render. Sidebar shows OpenType features and raw metadata (name, OS/2, head, post tables).
 - **Compare** — Overlay multiple fonts on a shared canvas with normalize toggle and auto-fit text sizing. Consistent color assignment across font toggles. Collapsible info panel with drag-resizable width.
 - **Format Support** — TTF, OTF, WOFF, WOFF2 (decompressed via wawoff2).
 - **Smart Naming** — Handles URW-style abbreviated names (including fonts without preferredFamilyName), typographic subfamily (name ID 17), super-family grouping across width and type variants (e.g., Alfabet types, Bungee visual variants), and fallback naming from filenames. Supports space-separated Noto-style names.
@@ -72,7 +72,6 @@ server/
   index.ts              # Express API routes
   database.ts           # JSON file database (fonts-db.json) + Google Fonts DB loading
   scanner.ts            # Font file scanning, metrics computation, classification, SVG extraction
-  googleFonts.ts        # Google Fonts metadata fetching + ZIP download
   buildGoogleFontsDb.ts # Build script for google-fonts-db.json
 src/
   components/           # React views (Library, Analyze, Compare, Glyphs, etc.)
@@ -109,8 +108,6 @@ google-fonts-db.json    # Pre-built Google Fonts database (committed)
 | GET | `/api/font-paths` | Get saved font folder paths |
 | POST | `/api/font-paths` | Add a font folder path |
 | DELETE | `/api/font-paths` | Remove a font folder path |
-| GET | `/api/google-fonts/list` | List Google Fonts families |
-| POST | `/api/google-fonts/download` | Download Google Fonts (streaming) |
 
 ## Testing
 

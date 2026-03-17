@@ -71,10 +71,12 @@ export function ProportionsView({ fontData, result, canvasRef: externalRef }: Pr
 
     const circleR = Math.min(rectW, rectH) / 2;
     ctx.beginPath();
-    ctx.strokeStyle = '#22c55e80';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 3]);
     ctx.arc(centerX, centerY, circleR, 0, Math.PI * 2);
     ctx.stroke();
+    ctx.setLineDash([]);
 
     ctx.fillStyle = '#3b82f6';
     ctx.font = '11px system-ui';

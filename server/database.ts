@@ -297,6 +297,7 @@ export function readGoogleFontsDb(): StoredFont[] {
       filePath: repoExists ? path.resolve(repoDir, f.filePath) : f.filePath,
     }));
 
+    applyOverrides(fonts);
     _googleFontsCache = fonts;
     _googleFontsCacheTime = now;
     return fonts;

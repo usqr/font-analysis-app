@@ -2,8 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { StoredFontMeta, FontFamily, FontCategory, FontSource, GlyphSvg } from '../types';
 import type { ScanEvent, ScanProgressUpdate } from '../lib/api';
-import { fetchDatabase, scanFolderStream, pickFolder, deleteFont, refreshFont, updateFontPath, clearDatabase, deduplicateDatabase, computeMetrics, downloadGoogleFonts as downloadGFonts, toggleStarFamily, fetchFontPaths, addFontPath, removeFontPath, bulkSetCategory, bulkSetTags, fetchAllTags } from '../lib/api';
-import type { GoogleDownloadEvent } from '../lib/api';
+import { fetchDatabase, scanFolderStream, pickFolder, deleteFont, refreshFont, updateFontPath, clearDatabase, deduplicateDatabase, computeMetrics, toggleStarFamily, fetchFontPaths, addFontPath, removeFontPath, bulkSetCategory, bulkSetTags, fetchAllTags } from '../lib/api';
 import { groupByFamily, variantLabel, groupByWidth, familyKey, type WidthStyleGroup } from '../lib/fontFamilies';
 import { useFontFace } from '../lib/useFontFace';
 import { HistogramFilter } from './HistogramFilter';
@@ -42,19 +41,13 @@ export function LibraryView() {
   const [confirmClear, setConfirmClear] = useState(false);
   const scanLogRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [globalCardState, setGlobalCardState] = useState<CardState | null>(null);
   const [globalCardVersion, setGlobalCardVersion] = useState(0);
   const [dedupMsg, setDedupMsg] = useState<string | null>(null);
   const dedupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<FontCategory | null>(null);
-  const [showGoogleFonts, setShowGoogleFonts] = useState(false);
-  const [gfFolder, setGfFolder] = useState('');
-  const [gfDownloading, setGfDownloading] = useState(false);
-  const [gfProgress, setGfProgress] = useState<{ current: number; total: number; downloaded: number; failed: number } | null>(null);
-  const [gfLastFamily, setGfLastFamily] = useState('');
-  const gfAbortRef = useRef<AbortController | null>(null);
   const [contrastRange, setContrastRange] = useState<[number, number]>([0, 1]);
   const [weightRange, setWeightRange] = useState<[number, number]>([0, 1]);
   const [widthRange, setWidthRange] = useState<[number, number]>([0, 2]);
@@ -442,59 +435,14 @@ export function LibraryView() {
     }
   }, [histogramValues]);
 
-  const handleCollapseAll = useCallback(() => {
-    setGlobalCardState('collapsed');
+  const handleToggleCollapse = useCallback(() => {
+    setGlobalCardState((prev) => {
+      const next = prev === 'collapsed' ? 'normal' : 'collapsed';
+      return next;
+    });
     setGlobalCardVersion((v) => v + 1);
   }, []);
 
-  const handleExpandAll = useCallback(() => {
-    setGlobalCardState('normal');
-    setGlobalCardVersion((v) => v + 1);
-  }, []);
-
-  const handleGoogleFontsBrowse = useCallback(async () => {
-    setBrowsing(true);
-    try {
-      const folder = await pickFolder();
-      if (folder) setGfFolder(folder);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setBrowsing(false);
-    }
-  }, []);
-
-  const handleGoogleFontsDownload = useCallback(async () => {
-    if (!gfFolder.trim()) return;
-    setGfDownloading(true);
-    setGfProgress(null);
-    setGfLastFamily('');
-    const controller = new AbortController();
-    gfAbortRef.current = controller;
-
-    try {
-      await downloadGFonts(gfFolder.trim(), null, (event: GoogleDownloadEvent) => {
-        if (event.type === 'start') {
-          setGfProgress({ current: 0, total: event.total ?? 0, downloaded: 0, failed: 0 });
-        } else if (event.type === 'progress') {
-          setGfProgress((prev) => ({
-            current: event.current ?? (prev?.current ?? 0),
-            total: event.total ?? (prev?.total ?? 0),
-            downloaded: (prev?.downloaded ?? 0) + (event.status === 'ok' ? 1 : 0),
-            failed: (prev?.failed ?? 0) + (event.status === 'error' ? 1 : 0),
-          }));
-          if (event.family) setGfLastFamily(event.family);
-        } else if (event.type === 'done') {
-          setGfProgress((prev) => prev ? { ...prev, current: prev.total, downloaded: event.downloaded ?? prev.downloaded, failed: event.failed ?? prev.failed } : prev);
-        }
-      }, controller.signal);
-    } catch (e: any) {
-      if (e.name !== 'AbortError') setError(e.message);
-    } finally {
-      setGfDownloading(false);
-      gfAbortRef.current = null;
-    }
-  }, [gfFolder]);
 
   if (loading) {
     return (
@@ -550,16 +498,6 @@ export function LibraryView() {
         >
           Scan Folder
         </button>
-        <button
-          onClick={() => setShowGoogleFonts((v) => !v)}
-          className={`rounded-md border px-4 py-1.5 text-sm font-medium transition-colors ${
-            showGoogleFonts
-              ? 'border-blue-500 bg-blue-500/10 text-blue-400'
-              : 'border-neutral-600 text-neutral-300 hover:bg-neutral-800 hover:text-white'
-          }`}
-        >
-          Google Fonts
-        </button>
         {allFonts.length > 0 && (
           confirmClear ? (
             <span className="flex items-center gap-2">
@@ -601,22 +539,13 @@ export function LibraryView() {
           </span>
         )}
         {viewMode === 'list' && allFonts.length > 0 && (
-          <>
-            <button
-              onClick={handleCollapseAll}
-              className="rounded-md border border-neutral-600 px-3 py-1.5 text-xs font-medium text-neutral-300 transition-colors hover:bg-neutral-800 hover:text-white"
-              data-testid="collapse-all"
-            >
-              Collapse All
-            </button>
-            <button
-              onClick={handleExpandAll}
-              className="rounded-md border border-neutral-600 px-3 py-1.5 text-xs font-medium text-neutral-300 transition-colors hover:bg-neutral-800 hover:text-white"
-              data-testid="expand-all"
-            >
-              Expand All
-            </button>
-          </>
+          <button
+            onClick={handleToggleCollapse}
+            className="rounded-md border border-neutral-600 px-3 py-1.5 text-xs font-medium text-neutral-300 transition-colors hover:bg-neutral-800 hover:text-white"
+            data-testid="toggle-collapse"
+          >
+            {globalCardState === 'collapsed' ? 'Expand All' : 'Collapse All'}
+          </button>
         )}
         {allFonts.length > 0 && (
           <button
@@ -903,85 +832,6 @@ export function LibraryView() {
         </div>
       )}
 
-      {/* Google Fonts download panel */}
-      {showGoogleFonts && (
-        <div className="border-b border-neutral-800 bg-neutral-900/80 px-4 py-3">
-          <div className="flex items-center gap-3">
-            <label className="text-sm text-neutral-400">Download to:</label>
-            <input
-              type="text"
-              value={gfFolder}
-              onChange={(e) => setGfFolder(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !gfDownloading && gfFolder.trim() && handleGoogleFontsDownload()}
-              placeholder="/path/to/google-fonts"
-              disabled={gfDownloading}
-              className="flex-1 rounded-md border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm text-neutral-200 placeholder-neutral-500 outline-none focus:border-blue-500 disabled:opacity-50"
-              autoFocus
-            />
-            <button
-              onClick={handleGoogleFontsBrowse}
-              disabled={browsing || gfDownloading}
-              className="rounded-md border border-neutral-600 px-3 py-1.5 text-sm text-neutral-300 transition-colors hover:bg-neutral-800 hover:text-white disabled:opacity-50"
-            >
-              {browsing ? 'Opening...' : 'Browse'}
-            </button>
-            {gfDownloading ? (
-              <button
-                onClick={() => gfAbortRef.current?.abort()}
-                className="rounded-md bg-red-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-red-500"
-              >
-                Stop
-              </button>
-            ) : (
-              <button
-                onClick={handleGoogleFontsDownload}
-                disabled={!gfFolder.trim()}
-                className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
-              >
-                Download All
-              </button>
-            )}
-            <button
-              onClick={() => { if (!gfDownloading) { setShowGoogleFonts(false); setGfProgress(null); } }}
-              disabled={gfDownloading}
-              className="rounded-md px-3 py-1.5 text-sm text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white disabled:opacity-50"
-            >
-              Close
-            </button>
-          </div>
-
-          {gfProgress && (
-            <div className="mt-3 space-y-2">
-              <div className="flex items-center gap-3">
-                <div className="h-2 flex-1 overflow-hidden rounded-full bg-neutral-800">
-                  <div
-                    className="h-full rounded-full bg-blue-500 transition-all duration-150"
-                    style={{ width: `${gfProgress.total > 0 ? (gfProgress.current / gfProgress.total) * 100 : 0}%` }}
-                  />
-                </div>
-                <span className="shrink-0 text-xs tabular-nums text-neutral-400">
-                  {gfProgress.current} / {gfProgress.total}
-                </span>
-              </div>
-              <div className="flex gap-4 text-xs">
-                <span className="text-emerald-400">{gfProgress.downloaded} downloaded</span>
-                {gfProgress.failed > 0 && <span className="text-red-400">{gfProgress.failed} failed</span>}
-                {gfLastFamily && <span className="text-neutral-500">{gfLastFamily}</span>}
-                {gfDownloading && gfProgress.total > 0 && (
-                  <span className="text-neutral-500">
-                    {Math.round((gfProgress.current / gfProgress.total) * 100)}%
-                  </span>
-                )}
-              </div>
-              {!gfDownloading && gfProgress.current >= gfProgress.total && (
-                <p className="text-xs text-emerald-400">
-                  Download complete. Use &quot;Scan Folder&quot; to import downloaded fonts into the library.
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Update path dialog */}
       {editingPath && (

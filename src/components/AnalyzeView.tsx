@@ -15,10 +15,10 @@ import { analyzeProportions } from '../analysis/proportions';
 import { analyzeWeight } from '../analysis/weight';
 import { analyzeSpacing } from '../analysis/spacing';
 import { exportAnalysisJSON, exportCanvasAsAvif } from '../lib/exportUtils';
-import { fetchFontData, fetchDatabase, toggleStarFamily } from '../lib/api';
+import { fetchFontData, fetchDatabase, toggleStarFamily, bulkSetCategory } from '../lib/api';
 import { groupByWidth, widthQualifier, weightLabel, superFamilyName, familyKey } from '../lib/fontFamilies';
 import { extractOTFFeatures, OTF_FEATURE_NAMES } from '../lib/otfFeatures';
-import type { StoredFontMeta } from '../types';
+import type { StoredFontMeta, FontCategory } from '../types';
 
 const WIDTH_CLASS_NAMES: Record<number, string> = {
   1: 'Ultra-Condensed', 2: 'Extra-Condensed', 3: 'Condensed',
@@ -122,6 +122,22 @@ function extractRawMetadata(font: import('opentype.js').Font): RawMetaSection[] 
   return sections;
 }
 
+const CATEGORIES: { id: FontCategory; label: string }[] = [
+  { id: 'serif', label: 'Serif' },
+  { id: 'sans-serif', label: 'Sans-Serif' },
+  { id: 'monospace', label: 'Monospace' },
+  { id: 'display', label: 'Display' },
+  { id: 'script', label: 'Script' },
+];
+
+const CAT_COLORS: Record<string, string> = {
+  'serif': 'bg-rose-500/15 text-rose-400 border-rose-500/30',
+  'sans-serif': 'bg-sky-500/15 text-sky-400 border-sky-500/30',
+  'monospace': 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+  'display': 'bg-purple-500/15 text-purple-400 border-purple-500/30',
+  'script': 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+};
+
 const TABS: { id: AnalysisTab; label: string; shortLabel: string }[] = [
   { id: 'contrast', label: 'Contrast', shortLabel: 'Contrast' },
   { id: 'xheight', label: 'X-Height', shortLabel: 'X-Ht' },
@@ -147,32 +163,76 @@ export function AnalyzeView() {
   const [showRawMeta, setShowRawMeta] = useState(false);
   const [familyStarred, setFamilyStarred] = useState(false);
   const [familyStarKey, setFamilyStarKey] = useState('');
+  const [showCatPopover, setShowCatPopover] = useState(false);
+  const [effectiveCategory, setEffectiveCategory] = useState<FontCategory | null>(null);
+  const catPopoverRef = useRef<HTMLDivElement>(null);
 
-  const runAnalysis = useCallback((data: FontData) => {
-    setFontData(data);
+  const analysisCache = useRef<Partial<FullAnalysis>>({});
+  const fontDataRef = useRef<FontData | null>(null);
+
+  const computeTabAnalysis = useCallback((tab: AnalysisTab, data: FontData): Partial<FullAnalysis> => {
+    switch (tab) {
+      case 'contrast':
+        return {
+          contrastLower: analyzeContrast(data.font, 'o', 120),
+          contrastUpper: analyzeContrast(data.font, 'O', 120),
+        };
+      case 'xheight':
+        return { xHeight: analyzeXHeight(data.font) };
+      case 'proportions':
+        return { proportions: analyzeProportions(data.font) };
+      case 'weight':
+        return { weight: analyzeWeight(data.font) };
+      case 'spacing':
+        return { spacing: analyzeSpacing(data.font) };
+      default:
+        return {};
+    }
+  }, []);
+
+  const ensureTabAnalysis = useCallback((tab: AnalysisTab, data: FontData) => {
+    const cache = analysisCache.current;
+    const needed = tab === 'contrast'
+      ? cache.contrastLower === undefined
+      : tab === 'xheight' ? cache.xHeight === undefined
+      : tab === 'proportions' ? cache.proportions === undefined
+      : tab === 'weight' ? cache.weight === undefined
+      : tab === 'spacing' ? cache.spacing === undefined
+      : false;
+
+    if (!needed) return;
+
     setAnalyzing(true);
-    setOtfFeatures(extractOTFFeatures(data.font));
-    setRawMeta(extractRawMetadata(data.font));
-
-    requestAnimationFrame(() => {
-      const results: FullAnalysis = {
-        contrastLower: analyzeContrast(data.font, 'o'),
-        contrastUpper: analyzeContrast(data.font, 'O'),
-        xHeight: analyzeXHeight(data.font),
-        proportions: analyzeProportions(data.font),
-        weight: analyzeWeight(data.font),
-        spacing: analyzeSpacing(data.font),
+    setTimeout(() => {
+      const partial = computeTabAnalysis(tab, data);
+      Object.assign(cache, partial);
+      const merged: FullAnalysis = {
+        contrastLower: cache.contrastLower ?? null,
+        contrastUpper: cache.contrastUpper ?? null,
+        xHeight: cache.xHeight ?? null,
+        proportions: cache.proportions ?? null,
+        weight: cache.weight ?? null,
+        spacing: cache.spacing ?? null,
       };
-      (window as any).__FA_ANALYSIS__ = results;
+      (window as any).__FA_ANALYSIS__ = merged;
       (window as any).__FA_FONT_DATA__ = {
         unitsPerEm: data.font.unitsPerEm,
         oBBox: data.font.charToGlyph('o')?.getBoundingBox(),
         OBBox: data.font.charToGlyph('O')?.getBoundingBox(),
       };
-      setAnalysis(results);
+      setAnalysis(merged);
       setAnalyzing(false);
-    });
-  }, []);
+    }, 0);
+  }, [computeTabAnalysis]);
+
+  const runAnalysis = useCallback((data: FontData) => {
+    analysisCache.current = {};
+    fontDataRef.current = data;
+    setFontData(data);
+    setOtfFeatures(extractOTFFeatures(data.font));
+    setRawMeta(extractRawMetadata(data.font));
+    ensureTabAnalysis('contrast', data);
+  }, [ensureTabAnalysis]);
 
   useEffect(() => {
     if (!fontId) return;
@@ -214,6 +274,7 @@ export function AnalyzeView() {
       const current = db.fonts.find((f) => f.id === fontId);
       if (!current) return;
       setCurrentMeta(current);
+      setEffectiveCategory(current.categoryOverride ?? current.category ?? null);
       const baseKey = superFamilyName(current);
       const currentSource = current.source ?? 'local';
       const members = db.fonts.filter((f) => superFamilyName(f) === baseKey && (f.source ?? 'local') === currentSource);
@@ -224,6 +285,13 @@ export function AnalyzeView() {
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [fontId]);
+
+  useEffect(() => {
+    const data = fontDataRef.current;
+    if (data && activeTab !== 'glyphs') {
+      ensureTabAnalysis(activeTab, data);
+    }
+  }, [activeTab, ensureTabAnalysis]);
 
   const familyNav = useMemo(() => {
     if (familyMembers.length <= 1 || !currentMeta) return null;
@@ -268,6 +336,29 @@ export function AnalyzeView() {
       await exportCanvasAsAvif(canvas, fontData.familyName, activeTab);
     }
   }, [fontData, activeTab]);
+
+  const handleCategoryOverride = useCallback(async (cat: FontCategory) => {
+    const ids = familyMembers.map((f) => f.id);
+    if (ids.length === 0) return;
+    setEffectiveCategory(cat);
+    setShowCatPopover(false);
+    try {
+      await bulkSetCategory(ids, cat);
+    } catch {
+      setEffectiveCategory(currentMeta?.categoryOverride ?? currentMeta?.category ?? null);
+    }
+  }, [familyMembers, currentMeta]);
+
+  useEffect(() => {
+    if (!showCatPopover) return;
+    const handleClick = (e: MouseEvent) => {
+      if (catPopoverRef.current && !catPopoverRef.current.contains(e.target as Node)) {
+        setShowCatPopover(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showCatPopover]);
 
   const summaryStats = useMemo<{ label: string; value: string }[]>(() => {
     if (!analysis) return [];
@@ -400,6 +491,35 @@ export function AnalyzeView() {
                     >
                       {currentMeta.source === 'google' ? 'G' : 'L'}
                     </span>
+                    {effectiveCategory && (
+                      <div className="relative">
+                        <button
+                          onClick={() => setShowCatPopover((v) => !v)}
+                          className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${CAT_COLORS[effectiveCategory] ?? 'bg-neutral-700/30 text-neutral-400 border-neutral-600'}`}
+                          title={`Category: ${effectiveCategory}`}
+                          data-testid="analyze-category-badge"
+                        >
+                          {effectiveCategory}
+                        </button>
+                        {showCatPopover && (
+                          <div ref={catPopoverRef} className="absolute left-0 top-full z-50 mt-1 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-xl">
+                            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">Set Category</div>
+                            {CATEGORIES.map((cat) => (
+                              <button
+                                key={cat.id}
+                                onClick={() => handleCategoryOverride(cat.id)}
+                                className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-neutral-800 ${
+                                  effectiveCategory === cat.id ? 'text-white' : 'text-neutral-400'
+                                }`}
+                              >
+                                <span className={`inline-block h-2 w-2 rounded-full ${CAT_COLORS[cat.id]?.split(' ')[0] ?? ''}`} />
+                                {cat.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
