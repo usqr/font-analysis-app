@@ -3,7 +3,7 @@ import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import * as opentype from 'opentype.js';
 import { decompress as woff2Decompress } from 'wawoff2';
-import type { StoredFont, FontMetrics, FontCategory, FontSource } from './database.js';
+import type { StoredFont, FontMetrics, FontCategory, FontSource, GlyphSvg } from './database.js';
 
 const FONT_EXTENSIONS = new Set(['.ttf', '.otf', '.woff', '.woff2']);
 
@@ -460,9 +460,25 @@ export function classifyFont(font: opentype.Font, metrics?: FontMetrics | null):
   return 'display';
 }
 
+const SVG_CHARS = ['A', 'a', 'o', 'O', 'H', 'x', 'n'];
+
+export function extractGlyphSvgs(font: opentype.Font): Record<string, GlyphSvg> | undefined {
+  const result: Record<string, GlyphSvg> = {};
+  for (const ch of SVG_CHARS) {
+    try {
+      const glyph = font.charToGlyph(ch);
+      if (!glyph || glyph.index === 0) continue;
+      const p = glyph.getPath(0, 0, font.unitsPerEm);
+      const d = p.toPathData(2);
+      if (!d || d.length === 0) continue;
+      result[ch] = { d, advWidth: glyph.advanceWidth ?? 0 };
+    } catch { /* skip broken glyphs */ }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 export interface ScanFontResult {
   meta: StoredFont;
-  base64Data: string;
 }
 
 export async function scanFont(filePath: string, source: FontSource = 'local'): Promise<ScanFontResult | null> {
@@ -546,6 +562,7 @@ export async function scanFont(filePath: string, source: FontSource = 'local'): 
 
     const metrics = computeFontMetrics(font) ?? undefined;
     const category = classifyFont(font, metrics);
+    const glyphSvgs = extractGlyphSvgs(font);
 
     return {
       meta: {
@@ -568,8 +585,8 @@ export async function scanFont(filePath: string, source: FontSource = 'local'): 
         ...(metrics ? { metrics } : {}),
         category,
         source,
+        ...(glyphSvgs ? { glyphSvgs } : {}),
       },
-      base64Data: fontBuffer.toString('base64'),
     };
   } catch {
     return null;

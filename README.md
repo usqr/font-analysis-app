@@ -4,8 +4,8 @@ A desktop-oriented web app for scanning, storing, analyzing, and comparing font 
 
 ## Features
 
-- **Font Library** — Scan local folders or download from Google Fonts. Save frequently-used font folder paths for quick access. Fonts are grouped by family with width tabs, style toggles, and collapsible cards. List and grid views with live "Aa" previews. Star favourite font families and add to compare from either view.
-- **Filtering** — Category radio buttons (Serif, Sans-Serif, Monospace, Display, Script), starred-only filter, text search, and histogram-based range filters for contrast, weight, width, and x-height.
+- **Font Library** — Scan local folders or browse 3500+ Google Fonts from the included starter database. Fonts are served directly from disk (no base64 backups). Grid view uses pre-extracted SVG glyph vectors for instant "Aa" previews. Fonts are grouped by family with width tabs, style toggles, and collapsible cards. Star favourite font families and add to compare from either view.
+- **Filtering** — Source filter (Local/Google), category radio buttons (Serif, Sans-Serif, Monospace, Display, Script), starred-only filter, text search, and histogram-based range filters for contrast, weight, width, and x-height.
 - **Manual Recategorization** — Each family card shows a colored category badge; click to override the auto-detected category. Bulk Edit mode allows selecting multiple families and applying category changes or tags in batch via a floating action bar. Overrides persist in a separate `font-overrides.json` file, surviving library clears and full rescans.
 - **Analyze** — Per-font analysis views: stroke contrast (with reference lines matching x-height view), x-height, proportions, weight distribution, spacing, and a paginated glyph grid with web font rendering and OTF feature filtering. Sidebar shows OpenType features and raw metadata (name, OS/2, head, post tables).
 - **Compare** — Overlay multiple fonts on a shared canvas with normalize toggle and auto-fit text sizing. Consistent color assignment across font toggles. Collapsible info panel with drag-resizable width.
@@ -40,6 +40,23 @@ npm run dev
 
 This starts both the Vite dev server and the Express API server (port 3001). The Vite proxy forwards `/api` requests to the backend.
 
+The app ships with a pre-built Google Fonts database (`google-fonts-db.json`, ~3500 fonts). To access the actual font files for preview and analysis, clone the Google Fonts repo:
+
+```bash
+git clone --depth=1 https://github.com/google/fonts.git google-fonts/
+```
+
+### Rebuilding the Google Fonts Database
+
+If you want to rebuild the Google Fonts starter database (e.g., after updating the repo):
+
+```bash
+cd google-fonts && git pull && cd ..
+npm run build:google-db
+```
+
+This scans all fonts in the cloned repo, computes metrics, extracts SVG vectors, and writes `google-fonts-db.json`.
+
 ### Other Commands
 
 ```bash
@@ -52,17 +69,20 @@ npm run preview     # Preview production build
 
 ```
 server/
-  index.ts            # Express API routes
-  database.ts         # JSON file database (fonts-db.json) + types
-  scanner.ts          # Font file scanning, metrics computation, classification
-  googleFonts.ts      # Google Fonts metadata fetching + ZIP download
+  index.ts              # Express API routes
+  database.ts           # JSON file database (fonts-db.json) + Google Fonts DB loading
+  scanner.ts            # Font file scanning, metrics computation, classification, SVG extraction
+  googleFonts.ts        # Google Fonts metadata fetching + ZIP download
+  buildGoogleFontsDb.ts # Build script for google-fonts-db.json
 src/
-  components/         # React views (Library, Analyze, Compare, Glyphs, etc.)
-  analysis/           # Client-side analysis modules (contrast, weight, spacing, ...)
-  lib/                # Utilities (API client, font families, OTF features, hooks)
-  types/              # TypeScript type definitions
-e2e/                  # Playwright E2E tests
-public/fonts/         # Sample fonts for testing
+  components/           # React views (Library, Analyze, Compare, Glyphs, etc.)
+  analysis/             # Client-side analysis modules (contrast, weight, spacing, ...)
+  lib/                  # Utilities (API client, font families, OTF features, hooks)
+  types/                # TypeScript type definitions
+e2e/                    # Playwright E2E tests
+public/fonts/           # Sample fonts for testing
+google-fonts/           # Cloned google/fonts repo (gitignored, optional)
+google-fonts-db.json    # Pre-built Google Fonts database (committed)
 ```
 
 ## API
@@ -71,12 +91,13 @@ public/fonts/         # Sample fonts for testing
 |--------|------|---------|
 | POST | `/api/pick-folder` | Native OS folder picker |
 | GET | `/api/scan-stream` | Streaming font scan (NDJSON) |
-| GET | `/api/database` | Get database |
+| GET | `/api/database` | Get merged database (local + Google fonts) |
 | POST | `/api/database` | Overwrite database |
-| DELETE | `/api/database` | Wipe database + font data |
+| DELETE | `/api/database` | Wipe database |
 | POST | `/api/database/dedup` | Deduplicate fonts |
-| POST | `/api/database/compute-metrics` | Compute metrics + reclassify all fonts |
-| GET | `/api/fonts/:id/data` | Get font base64 data |
+| POST | `/api/database/compute-metrics` | Compute metrics + reclassify + extract SVGs |
+| GET | `/api/fonts/:id/file` | Serve font binary from disk |
+| GET | `/api/fonts/:id/data` | Get font base64 data (read from disk) |
 | PUT | `/api/fonts/:id/category` | Set category override |
 | PUT | `/api/fonts/bulk-category` | Bulk set category override |
 | PUT | `/api/fonts/:id/tags` | Set tags |

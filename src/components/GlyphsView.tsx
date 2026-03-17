@@ -2,7 +2,6 @@ import { useState, useMemo, useCallback, useEffect, Component, type ReactNode } 
 import type { Font, Glyph } from 'opentype.js';
 import type { FontData } from '../types';
 import { OTF_FEATURE_NAMES } from '../lib/otfFeatures';
-import { fetchFontData } from '../lib/api';
 
 class GlyphsErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -130,17 +129,14 @@ function useGlyphFontFace(fontId: string): string | null {
     }
 
     let cancelled = false;
-    fetchFontData(fontId).then((data) => {
+    const cssName = `__glyph_${fontId.slice(0, 8)}`;
+    const url = `/api/fonts/${fontId}/file`;
+    const style = document.createElement('style');
+    style.textContent = `@font-face { font-family: '${cssName}'; src: url('${url}'); font-display: block; }`;
+    document.head.appendChild(style);
+
+    document.fonts.load(`16px '${cssName}'`).then(() => {
       if (cancelled) return;
-      const cssName = `__glyph_${fontId.slice(0, 8)}`;
-      const mimeMap: Record<string, string> = {
-        otf: 'font/opentype', ttf: 'font/truetype',
-        woff: 'font/woff', woff2: 'font/woff2',
-      };
-      const mime = mimeMap[data.format] ?? 'font/opentype';
-      const style = document.createElement('style');
-      style.textContent = `@font-face { font-family: '${cssName}'; src: url('data:${mime};base64,${data.base64Data}'); font-display: block; }`;
-      document.head.appendChild(style);
       fontFaceCache.set(fontId, cssName);
       setFontFamily(cssName);
     }).catch(() => {});

@@ -1,8 +1,8 @@
 import { useCallback, useState, type DragEvent, type ChangeEvent } from 'react';
 import * as opentype from 'opentype.js';
+import { decompress as woff2Decompress } from 'wawoff2';
 import type { FontData, SampleFont } from '../types';
 import { SAMPLE_FONTS } from '../lib/sampleFonts';
-import { convertWoff2 } from '../lib/api';
 
 interface Props {
   onFontLoaded: (fontData: FontData) => void;
@@ -20,12 +20,8 @@ export function FontUploader({ onFontLoaded }: Props) {
       try {
         let parseBuffer = buffer;
         if (fileName.toLowerCase().endsWith('.woff2')) {
-          const b64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
-          const ttfB64 = await convertWoff2(b64);
-          const binary = atob(ttfB64);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-          parseBuffer = bytes.buffer;
+          const decompressed = await woff2Decompress(new Uint8Array(buffer));
+          parseBuffer = decompressed instanceof ArrayBuffer ? decompressed : (decompressed as Uint8Array).buffer;
         }
 
         const font = opentype.parse(parseBuffer);

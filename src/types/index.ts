@@ -97,6 +97,11 @@ export interface FontMetrics {
   xHeight: number;
 }
 
+export interface GlyphSvg {
+  d: string;
+  advWidth: number;
+}
+
 export interface StoredFontMeta {
   id: string;
   filePath: string;
@@ -119,6 +124,7 @@ export interface StoredFontMeta {
   categoryOverride?: FontCategory;
   tags?: string[];
   source?: FontSource;
+  glyphSvgs?: Record<string, GlyphSvg>;
 }
 
 export interface StoredFontData {

@@ -11,6 +11,11 @@ export interface FontMetrics {
   xHeight: number;
 }
 
+export interface GlyphSvg {
+  d: string;
+  advWidth: number;
+}
+
 export interface StoredFont {
   id: string;
   filePath: string;
@@ -33,6 +38,7 @@ export interface StoredFont {
   categoryOverride?: FontCategory;
   tags?: string[];
   source?: FontSource;
+  glyphSvgs?: Record<string, GlyphSvg>;
 }
 
 export interface FontDatabase {
@@ -53,12 +59,6 @@ export function getDbPath() {
   return dbPath;
 }
 
-function dataDir(): string {
-  const dir = path.join(path.dirname(dbPath), 'fonts-data');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
 export function readDatabase(): FontDatabase {
   if (!fs.existsSync(dbPath)) return { ...DEFAULT_DB, fonts: [] };
   try {
@@ -75,29 +75,7 @@ export function writeDatabase(db: FontDatabase): void {
   fs.renameSync(tmp, dbPath);
 }
 
-export function writeFontData(id: string, base64Data: string): void {
-  const file = path.join(dataDir(), `${id}.b64`);
-  fs.writeFileSync(file, base64Data, 'utf-8');
-}
-
-export function readFontData(id: string): string | null {
-  const file = path.join(dataDir(), `${id}.b64`);
-  if (!fs.existsSync(file)) return null;
-  return fs.readFileSync(file, 'utf-8');
-}
-
-export function deleteFontData(id: string): void {
-  const file = path.join(dataDir(), `${id}.b64`);
-  if (fs.existsSync(file)) fs.unlinkSync(file);
-}
-
 export function clearAllFontData(): void {
-  const dir = path.join(path.dirname(dbPath), 'fonts-data');
-  if (fs.existsSync(dir)) {
-    for (const file of fs.readdirSync(dir)) {
-      fs.unlinkSync(path.join(dir, file));
-    }
-  }
   writeDatabase({ ...DEFAULT_DB, fonts: [] });
 }
 
@@ -283,4 +261,58 @@ export function readFontPaths(): string[] {
 export function writeFontPaths(paths: string[]): void {
   const file = fontPathsFile();
   fs.writeFileSync(file, JSON.stringify({ paths }, null, 2), 'utf-8');
+}
+
+// --- Google Fonts starter DB (committed, read-only at runtime) ---
+
+export interface GoogleFontsDatabase {
+  version: number;
+  builtAt: string;
+  fonts: StoredFont[];
+}
+
+const GOOGLE_FONTS_DB_FILE = 'google-fonts-db.json';
+const GOOGLE_FONTS_REPO_DIR = 'google-fonts';
+
+let _googleFontsCache: StoredFont[] | null = null;
+let _googleFontsCacheTime = 0;
+const CACHE_TTL = 60_000;
+
+export function readGoogleFontsDb(): StoredFont[] {
+  const now = Date.now();
+  if (_googleFontsCache && now - _googleFontsCacheTime < CACHE_TTL) {
+    return _googleFontsCache;
+  }
+
+  const dbFile = path.resolve(process.cwd(), GOOGLE_FONTS_DB_FILE);
+  if (!fs.existsSync(dbFile)) return [];
+
+  try {
+    const raw = JSON.parse(fs.readFileSync(dbFile, 'utf-8')) as GoogleFontsDatabase;
+    const repoDir = path.resolve(process.cwd(), GOOGLE_FONTS_REPO_DIR);
+    const repoExists = fs.existsSync(repoDir);
+
+    const fonts = raw.fonts.map((f) => ({
+      ...f,
+      filePath: repoExists ? path.resolve(repoDir, f.filePath) : f.filePath,
+    }));
+
+    _googleFontsCache = fonts;
+    _googleFontsCacheTime = now;
+    return fonts;
+  } catch {
+    return [];
+  }
+}
+
+export function findFontById(id: string): { font: StoredFont; isGoogle: boolean } | null {
+  const db = readDatabase();
+  const local = db.fonts.find((f) => f.id === id);
+  if (local) return { font: local, isGoogle: false };
+
+  const googleFonts = readGoogleFontsDb();
+  const gf = googleFonts.find((f) => f.id === id);
+  if (gf) return { font: gf, isGoogle: true };
+
+  return null;
 }

@@ -5,12 +5,12 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import * as opentype from 'opentype.js';
 import {
-  readDatabase, writeDatabase, mergeFonts, deduplicateFonts,
-  writeFontData, readFontData, deleteFontData, clearAllFontData,
+  readDatabase, writeDatabase, mergeFonts, deduplicateFonts, clearAllFontData,
   readFontPaths, writeFontPaths,
   applyOverrides, saveOverride, saveOverrides, readOverrides,
+  readGoogleFontsDb, findFontById,
 } from './database.js';
-import { scanFolder, scanFont, walkDir, computeFontMetrics, classifyFont } from './scanner.js';
+import { scanFolder, scanFont, walkDir, computeFontMetrics, classifyFont, extractGlyphSvgs } from './scanner.js';
 import { listGoogleFonts, downloadGoogleFonts } from './googleFonts.js';
 
 const app = express();
@@ -94,10 +94,9 @@ app.get('/api/scan-stream', (req, res) => {
   const flush = () => {
     if (scannedMetas.length === 0) return;
     const db = readDatabase();
-    const { fonts, discardedIds } = mergeFonts(db.fonts, scannedMetas);
+    const { fonts } = mergeFonts(db.fonts, scannedMetas);
     db.fonts = fonts;
     writeDatabase(db);
-    for (const id of discardedIds) deleteFontData(id);
     unsaved = 0;
   };
 
@@ -115,7 +114,6 @@ app.get('/api/scan-stream', (req, res) => {
     const file = files[i];
     const result = await scanFont(file, source);
     if (result) {
-      writeFontData(result.meta.id, result.base64Data);
       scannedMetas.push(result.meta);
       added++;
       unsaved++;
@@ -161,25 +159,26 @@ app.post('/api/scan', async (req, res) => {
 
   try {
     const results = await scanFolder(folderPath, source === 'google' ? 'google' : 'local');
-    for (const r of results) {
-      writeFontData(r.meta.id, r.base64Data);
-    }
     const db = readDatabase();
-    const { fonts, discardedIds } = mergeFonts(db.fonts, results.map((r) => r.meta));
+    const { fonts } = mergeFonts(db.fonts, results.map((r) => r.meta));
     db.fonts = fonts;
     applyOverrides(db.fonts);
     writeDatabase(db);
-    for (const id of discardedIds) deleteFontData(id);
     res.json({ added: results.length, total: db.fonts.length });
   } catch (e: any) {
     res.status(400).json({ error: e.message });
   }
 });
 
-// Load database (metadata only)
+// Load database (local + Google fonts merged)
 app.get('/api/database', (_req, res) => {
   const db = readDatabase();
-  res.json(db);
+  const googleFonts = readGoogleFontsDb();
+  const merged = {
+    ...db,
+    fonts: [...db.fonts, ...googleFonts],
+  };
+  res.json(merged);
 });
 
 // Overwrite database
@@ -199,22 +198,29 @@ app.post('/api/database/dedup', (_req, res) => {
   const { fonts, discardedIds } = deduplicateFonts(db.fonts);
   db.fonts = fonts;
   writeDatabase(db);
-  for (const id of discardedIds) deleteFontData(id);
   res.json({ removed: discardedIds.length, total: fonts.length });
 });
 
 // Retroactively compute metrics and reclassify all fonts
-app.post('/api/database/compute-metrics', (_req, res) => {
+app.post('/api/database/compute-metrics', async (_req, res) => {
+  const { decompress } = await import('wawoff2');
   const db = readDatabase();
   let updated = 0;
 
   for (const font of db.fonts) {
-    const base64Data = readFontData(font.id);
-    if (!base64Data) continue;
+    if (!fs.existsSync(font.filePath)) continue;
 
     try {
-      const buf = Buffer.from(base64Data, 'base64');
-      const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+      const rawBuffer = fs.readFileSync(font.filePath);
+      const ext = path.extname(font.filePath).toLowerCase();
+      let fontBuffer: Buffer;
+      if (ext === '.woff2') {
+        const decompressed = await decompress(rawBuffer);
+        fontBuffer = Buffer.from(decompressed);
+      } else {
+        fontBuffer = rawBuffer;
+      }
+      const ab = fontBuffer.buffer.slice(fontBuffer.byteOffset, fontBuffer.byteOffset + fontBuffer.byteLength);
       const parsed = opentype.parse(ab as ArrayBuffer);
 
       if (!font.metrics) {
@@ -225,6 +231,10 @@ app.post('/api/database/compute-metrics', (_req, res) => {
       if (font.category !== newCat) {
         font.category = newCat;
         updated++;
+      }
+      if (!font.glyphSvgs) {
+        const svgs = extractGlyphSvgs(parsed);
+        if (svgs) { font.glyphSvgs = svgs; updated++; }
       }
     } catch {
       // skip fonts that fail to parse
@@ -243,49 +253,63 @@ app.get('/api/overrides', (_req, res) => {
   res.json({ count, overrides: data.overrides });
 });
 
-// Convert woff2 buffer to ttf (for client-side use)
-app.post('/api/convert-woff2', async (req, res) => {
-  try {
-    const { base64Data } = req.body;
-    if (!base64Data || typeof base64Data !== 'string') {
-      res.status(400).json({ error: 'base64Data is required' });
-      return;
-    }
-    const { decompress } = await import('wawoff2');
-    const woff2Buf = Buffer.from(base64Data, 'base64');
-    const ttfBuf = await decompress(woff2Buf);
-    res.json({ base64Data: Buffer.from(ttfBuf).toString('base64') });
-  } catch (e: any) {
-    res.status(500).json({ error: e.message ?? 'woff2 conversion failed' });
-  }
-});
-
 // Wipe entire database and all stored font data
 app.delete('/api/database', (_req, res) => {
   clearAllFontData();
   res.json({ ok: true });
 });
 
-// Get a single font's base64 data
-app.get('/api/fonts/:id/data', (req, res) => {
-  const db = readDatabase();
-  const font = db.fonts.find((f) => f.id === req.params.id);
-  if (!font) {
+// Serve font binary from its original file path
+app.get('/api/fonts/:id/file', async (_req, res) => {
+  const result = findFontById(_req.params.id);
+  if (!result) { res.status(404).json({ error: 'Font not found' }); return; }
+  const { font } = result;
+  if (!fs.existsSync(font.filePath)) {
+    res.status(404).json({ error: 'Font file not found on disk' });
+    return;
+  }
+  const mimeMap: Record<string, string> = {
+    otf: 'font/otf', ttf: 'font/ttf', woff: 'font/woff', woff2: 'font/woff2',
+  };
+  const ext = path.extname(font.filePath).toLowerCase().slice(1);
+  res.setHeader('Content-Type', mimeMap[ext] ?? 'application/octet-stream');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  fs.createReadStream(font.filePath).pipe(res);
+});
+
+// Get a single font's base64 data (reads from original file on disk)
+app.get('/api/fonts/:id/data', async (req, res) => {
+  const result = findFontById(req.params.id);
+  if (!result) {
     res.status(404).json({ error: 'Font not found' });
     return;
   }
-  const base64Data = readFontData(font.id);
-  if (!base64Data) {
-    res.status(404).json({ error: 'Font data file not found' });
+  const { font } = result;
+  if (!fs.existsSync(font.filePath)) {
+    res.status(404).json({ error: 'Font file not found on disk' });
     return;
   }
-  res.json({
-    id: font.id,
-    familyName: font.preferredFamilyName ?? font.familyName,
-    subfamilyName: font.subfamilyName,
-    format: font.format,
-    base64Data,
-  });
+  try {
+    const rawBuffer = fs.readFileSync(font.filePath);
+    const ext = path.extname(font.filePath).toLowerCase();
+    let fontBuffer: Buffer;
+    if (ext === '.woff2') {
+      const { decompress } = await import('wawoff2');
+      const decompressed = await decompress(rawBuffer);
+      fontBuffer = Buffer.from(decompressed);
+    } else {
+      fontBuffer = rawBuffer;
+    }
+    res.json({
+      id: font.id,
+      familyName: font.preferredFamilyName ?? font.familyName,
+      subfamilyName: font.subfamilyName,
+      format: font.format,
+      base64Data: fontBuffer.toString('base64'),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message ?? 'Failed to read font file' });
+  }
 });
 
 // Update a font's file path
@@ -333,7 +357,6 @@ app.put('/api/fonts/:id/refresh', async (req, res) => {
   result.meta.addedAt = existing.addedAt;
   db.fonts[idx] = result.meta;
   writeDatabase(db);
-  writeFontData(existing.id, result.base64Data);
 
   res.json(result.meta);
 });
@@ -374,7 +397,6 @@ app.delete('/api/fonts/:id', (req, res) => {
 
   db.fonts.splice(idx, 1);
   writeDatabase(db);
-  deleteFontData(req.params.id);
   res.json({ ok: true });
 });
 
@@ -506,8 +528,9 @@ app.put('/api/fonts/bulk-tags', (req, res) => {
 
 app.get('/api/tags', (_req, res) => {
   const db = readDatabase();
+  const googleFonts = readGoogleFontsDb();
   const tagSet = new Set<string>();
-  for (const font of db.fonts) {
+  for (const font of [...db.fonts, ...googleFonts]) {
     if (font.tags) for (const t of font.tags) tagSet.add(t);
   }
   res.json({ tags: Array.from(tagSet).sort() });

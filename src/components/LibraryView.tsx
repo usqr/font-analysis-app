@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { StoredFontMeta, FontFamily, FontCategory } from '../types';
+import type { StoredFontMeta, FontFamily, FontCategory, FontSource, GlyphSvg } from '../types';
 import type { ScanEvent, ScanProgressUpdate } from '../lib/api';
 import { fetchDatabase, scanFolderStream, pickFolder, deleteFont, refreshFont, updateFontPath, clearDatabase, deduplicateDatabase, computeMetrics, downloadGoogleFonts as downloadGFonts, toggleStarFamily, fetchFontPaths, addFontPath, removeFontPath, bulkSetCategory, bulkSetTags, fetchAllTags } from '../lib/api';
 import type { GoogleDownloadEvent } from '../lib/api';
@@ -61,6 +61,7 @@ export function LibraryView() {
   const [xHeightRange, setXHeightRange] = useState<[number, number]>([0, 1]);
   const [metricsReady, setMetricsReady] = useState(false);
   const [showStarredOnly, setShowStarredOnly] = useState(false);
+  const [selectedSource, setSelectedSource] = useState<FontSource | null>(null);
   const [starredSet, setStarredSet] = useState<Set<string>>(new Set());
   const starredRef = useRef(starredSet);
   starredRef.current = starredSet;
@@ -368,6 +369,9 @@ export function LibraryView() {
 
   const searchAndCatFiltered = useMemo(() => {
     let result = families;
+    if (selectedSource) {
+      result = result.filter((f) => (f.source ?? 'local') === selectedSource);
+    }
     if (showStarredOnly) {
       result = result.filter((f) => f.starred);
     }
@@ -382,7 +386,7 @@ export function LibraryView() {
       });
     }
     return result;
-  }, [families, search, selectedCategory, familyMetrics, showStarredOnly]);
+  }, [families, search, selectedCategory, familyMetrics, showStarredOnly, selectedSource]);
 
   const filteredHistogramValues = useMemo(
     () => collectMetricValues(searchAndCatFiltered),
@@ -426,6 +430,7 @@ export function LibraryView() {
 
   const resetAllFilters = useCallback(() => {
     setSelectedCategory(null);
+    setSelectedSource(null);
     setShowStarredOnly(false);
     setSearch('');
     if (histogramValues.contrast.length > 0) {
@@ -653,6 +658,20 @@ export function LibraryView() {
               &#9733; Starred
             </button>
             <span className="mx-1 text-neutral-700">|</span>
+            {([['local', 'Local'], ['google', 'Google']] as const).map(([src, label]) => (
+              <button
+                key={src}
+                onClick={() => setSelectedSource((prev) => prev === src ? null : src)}
+                className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                  selectedSource === src
+                    ? 'border-green-500 bg-green-500/10 text-green-400'
+                    : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-300'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            <span className="mx-1 text-neutral-700">|</span>
             {CATEGORIES.map((cat) => (
               <button
                 key={cat.id}
@@ -666,7 +685,7 @@ export function LibraryView() {
                 {cat.label}
               </button>
             ))}
-            {(selectedCategory !== null || search.trim() || showStarredOnly) && (
+            {(selectedCategory !== null || selectedSource !== null || search.trim() || showStarredOnly) && (
               <button
                 onClick={resetAllFilters}
                 className="ml-1 text-xs text-neutral-500 hover:text-neutral-300"
@@ -1596,6 +1615,34 @@ function pickPreviewFont(fonts: StoredFontMeta[]): StoredFontMeta {
   return regular ?? fonts.find((f) => f.style === 'normal') ?? fonts[0];
 }
 
+function SvgPreview({ glyphSvgs, ascender, descender }: {
+  glyphSvgs: Record<string, GlyphSvg>;
+  ascender: number;
+  descender: number;
+}) {
+  const glyphA = glyphSvgs['A'];
+  const glypha = glyphSvgs['a'];
+  if (!glyphA || !glypha) return null;
+
+  const totalWidth = glyphA.advWidth + glypha.advWidth;
+  const height = ascender - descender;
+  if (totalWidth <= 0 || height <= 0) return null;
+
+  return (
+    <svg
+      viewBox={`0 ${-ascender} ${totalWidth} ${height}`}
+      className="h-full w-auto max-w-full"
+      fill="currentColor"
+      data-testid="grid-card-preview"
+    >
+      <path d={glyphA.d} />
+      <g transform={`translate(${glyphA.advWidth},0)`}>
+        <path d={glypha.d} />
+      </g>
+    </svg>
+  );
+}
+
 interface GridFamilyCardProps {
   family: FontFamily;
   selected: Set<string>;
@@ -1726,12 +1773,14 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
         </div>
       )}
 
-      <div className="flex h-24 w-full items-center justify-center">
-        {loading ? (
+      <div className="flex h-24 w-full items-center justify-center text-white">
+        {previewFont.glyphSvgs?.['A'] && previewFont.glyphSvgs?.['a'] ? (
+          <SvgPreview glyphSvgs={previewFont.glyphSvgs} ascender={previewFont.ascender} descender={previewFont.descender} />
+        ) : loading ? (
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-600 border-t-blue-400" />
         ) : (
           <span
-            className="text-5xl text-white transition-opacity"
+            className="text-5xl transition-opacity"
             style={{
               fontFamily: fontFamily ? `'${fontFamily}', serif` : 'serif',
               opacity: fontFamily ? 1 : 0.3,

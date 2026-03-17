@@ -153,16 +153,6 @@ export async function removeFontPath(path: string): Promise<string[]> {
   return data.paths;
 }
 
-export async function convertWoff2(base64Data: string): Promise<string> {
-  const res = await fetch(`${BASE}/convert-woff2`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ base64Data }),
-  });
-  const data = await json<{ base64Data: string }>(res);
-  return data.base64Data;
-}
-
 export async function deduplicateDatabase(): Promise<{ removed: number; total: number }> {
   const res = await fetch(`${BASE}/database/dedup`, { method: 'POST' });
   return json<{ removed: number; total: number }>(res);

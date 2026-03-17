@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { fetchFontData } from './api';
 
 const fontCache = new Map<string, string>();
 const loadingSet = new Set<string>();
@@ -23,19 +22,12 @@ async function loadFont(fontId: string): Promise<string> {
 
   loadingSet.add(fontId);
   try {
-    const data = await fetchFontData(fontId);
-    const mimeMap: Record<string, string> = {
-      otf: 'font/opentype',
-      ttf: 'font/truetype',
-      woff: 'font/woff',
-      woff2: 'font/woff2',
-    };
-    const mime = mimeMap[data.format] ?? 'font/opentype';
-    const url = `data:${mime};base64,${data.base64Data}`;
-
+    const url = `/api/fonts/${fontId}/file`;
     const style = document.createElement('style');
     style.textContent = `@font-face { font-family: '${cssName}'; src: url('${url}'); font-display: swap; }`;
     document.head.appendChild(style);
+
+    await document.fonts.load(`16px '${cssName}'`).catch(() => {});
     fontCache.set(fontId, cssName);
     return cssName;
   } finally {
