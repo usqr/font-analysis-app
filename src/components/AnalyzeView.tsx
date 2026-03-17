@@ -18,7 +18,8 @@ import { exportAnalysisJSON, exportCanvasAsAvif } from '../lib/exportUtils';
 import { fetchFontData, fetchDatabase, toggleStarFamily, bulkSetCategory } from '../lib/api';
 import { groupByWidth, widthQualifier, weightLabel, superFamilyName, familyKey } from '../lib/fontFamilies';
 import { extractOTFFeatures, OTF_FEATURE_NAMES } from '../lib/otfFeatures';
-import type { StoredFontMeta, FontCategory } from '../types';
+import type { StoredFontMeta, FontCategory, VariableAxis } from '../types';
+import { useFontFace } from '../lib/useFontFace';
 
 const WIDTH_CLASS_NAMES: Record<number, string> = {
   1: 'Ultra-Condensed', 2: 'Extra-Condensed', 3: 'Condensed',
@@ -166,6 +167,9 @@ export function AnalyzeView() {
   const [showCatPopover, setShowCatPopover] = useState(false);
   const [effectiveCategory, setEffectiveCategory] = useState<FontCategory | null>(null);
   const catPopoverRef = useRef<HTMLDivElement>(null);
+  const [variableAxes, setVariableAxes] = useState<VariableAxis[]>([]);
+  const [axisValues, setAxisValues] = useState<Record<string, number>>({});
+  const { fontFamily: previewFontFamily } = useFontFace(fontId ?? null);
 
   const analysisCache = useRef<Partial<FullAnalysis>>({});
   const fontDataRef = useRef<FontData | null>(null);
@@ -254,6 +258,17 @@ export function AnalyzeView() {
           descender: font.descender,
           glyphCount: font.glyphs.length,
         };
+
+        const fvarTable = (font.tables as any).fvar;
+        const axes: VariableAxis[] = fvarTable?.axes?.map((a: any) => ({
+          tag: a.tag as string,
+          minValue: a.minValue as number,
+          defaultValue: a.defaultValue as number,
+          maxValue: a.maxValue as number,
+          name: typeof a.name === 'object' ? (a.name?.en as string | undefined) : (a.name as string | undefined),
+        })) ?? [];
+        setVariableAxes(axes);
+        setAxisValues(Object.fromEntries(axes.map((a) => [a.tag, a.defaultValue])));
 
         const current = db.fonts.find((f) => f.id === fontId);
         if (current) {
@@ -616,6 +631,54 @@ export function AnalyzeView() {
             )}
           </div>
         )}
+        {variableAxes.length > 0 && (
+          <div className="mt-3 rounded-lg border border-teal-500/20 bg-teal-500/5 p-3">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="inline-flex h-5 items-center justify-center rounded-full bg-teal-500/15 px-1.5 text-[10px] font-bold text-teal-400">VF</span>
+              <span className="text-xs font-medium text-teal-400">Variable Font Axes</span>
+              <button
+                onClick={() => setAxisValues(Object.fromEntries(variableAxes.map((a) => [a.tag, a.defaultValue])))}
+                className="ml-auto text-xs text-neutral-500 hover:text-neutral-300"
+              >
+                Reset
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              {variableAxes.map((axis) => (
+                <div key={axis.tag} className="flex items-center gap-2">
+                  <span className="w-10 text-xs font-medium uppercase text-neutral-400">{axis.tag}</span>
+                  <input
+                    type="range"
+                    min={axis.minValue}
+                    max={axis.maxValue}
+                    step={axis.maxValue - axis.minValue > 10 ? 1 : 0.01}
+                    value={axisValues[axis.tag] ?? axis.defaultValue}
+                    onChange={(e) => setAxisValues((prev) => ({ ...prev, [axis.tag]: parseFloat(e.target.value) }))}
+                    className="w-28 accent-teal-500"
+                  />
+                  <span className="w-12 text-right text-xs tabular-nums text-neutral-500">
+                    {(axisValues[axis.tag] ?? axis.defaultValue).toFixed(axis.maxValue - axis.minValue > 10 ? 0 : 2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {previewFontFamily && (
+              <div
+                className="mt-3 overflow-hidden rounded border border-neutral-800 bg-neutral-900 px-4 py-3 text-neutral-200"
+                style={{
+                  fontFamily: `'${previewFontFamily}', sans-serif`,
+                  fontVariationSettings: Object.entries(axisValues)
+                    .map(([tag, val]) => `'${tag}' ${val}`)
+                    .join(', '),
+                  fontSize: '2rem',
+                  lineHeight: 1.4,
+                }}
+              >
+                The quick brown fox jumps over the lazy dog
+              </div>
+            )}
+          </div>
+        )}
       </header>
 
       <nav className="flex border-b border-neutral-800" data-testid="analysis-tabs">
@@ -741,6 +804,24 @@ export function AnalyzeView() {
               </div>
             </dl>
           </div>
+
+          {variableAxes.length > 0 && (
+            <div className="mt-6 border-t border-neutral-800 pt-4">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-400">
+                Variable Axes
+              </h3>
+              <dl className="space-y-2">
+                {variableAxes.map((axis) => (
+                  <div key={axis.tag}>
+                    <dt className="text-xs text-neutral-400">{axis.name ?? axis.tag}</dt>
+                    <dd className="text-sm text-neutral-300">
+                      {axis.minValue} – {axis.maxValue} (default: {axis.defaultValue})
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          )}
 
           {otfFeatures.length > 0 && (
             <div className="mt-6 border-t border-neutral-800 pt-4">

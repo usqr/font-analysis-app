@@ -723,6 +723,16 @@ export async function scanFont(filePath: string, source: FontSource = 'local'): 
     const analysis = computeFullAnalysis(font);
     const scriptSupport = detectScriptSupport(font);
 
+    const fvar = (font.tables as any).fvar;
+    const isVariable = !!fvar?.axes?.length;
+    const variableAxes = fvar?.axes?.map((a: any) => ({
+      tag: a.tag as string,
+      minValue: a.minValue as number,
+      defaultValue: a.defaultValue as number,
+      maxValue: a.maxValue as number,
+      name: typeof a.name === 'object' ? (a.name.en as string | undefined) : (a.name as string | undefined),
+    })) ?? [];
+
     return {
       meta: {
         id: uuidv4(),
@@ -747,6 +757,7 @@ export async function scanFont(filePath: string, source: FontSource = 'local'): 
         ...(glyphSvgs ? { glyphSvgs } : {}),
         analysis,
         ...(scriptSupport.length > 0 ? { scriptSupport } : {}),
+        ...(isVariable ? { isVariable, variableAxes } : {}),
       },
     };
   } catch {

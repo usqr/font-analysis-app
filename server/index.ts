@@ -249,6 +249,21 @@ app.post('/api/database/compute-metrics', async (_req, res) => {
         const scripts = detectScriptSupport(parsed);
         if (scripts.length > 0) { font.scriptSupport = scripts; updated++; }
       }
+      if (font.isVariable === undefined) {
+        const fvar = (parsed.tables as any).fvar;
+        const isVar = !!fvar?.axes?.length;
+        if (isVar) {
+          font.isVariable = true;
+          font.variableAxes = fvar.axes.map((a: any) => ({
+            tag: a.tag,
+            minValue: a.minValue,
+            defaultValue: a.defaultValue,
+            maxValue: a.maxValue,
+            name: typeof a.name === 'object' ? a.name.en : a.name,
+          }));
+          updated++;
+        }
+      }
     } catch {
       // skip fonts that fail to parse
     }

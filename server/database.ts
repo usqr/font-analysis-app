@@ -43,6 +43,8 @@ export interface StoredFont {
   glyphSvgs?: Record<string, GlyphSvg>;
   analysis?: FullAnalysis;
   scriptSupport?: string[];
+  isVariable?: boolean;
+  variableAxes?: { tag: string; minValue: number; defaultValue: number; maxValue: number; name?: string }[];
 }
 
 export interface FontDatabase {

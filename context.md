@@ -35,6 +35,8 @@ interface StoredFont {
   category?: 'serif' | 'sans-serif' | 'monospace' | 'display' | 'script';
   categoryOverride?: 'serif' | 'sans-serif' | 'monospace' | 'display' | 'script';
   tags?: string[];
+  isVariable?: boolean;           // True if font has fvar table with axes
+  variableAxes?: VariableAxis[];  // { tag, minValue, defaultValue, maxValue, name }
 }
 ```
 
@@ -269,6 +271,7 @@ Database: `{ version: 1, fonts: StoredFont[] }` in `fonts-db.json`, atomic write
 | `src/components/FontUploader.tsx` | Accepts .woff2, **client-side woff2 decompression** via `wawoff2` WASM (replaced server-side `convertWoff2`) |
 | `playwright.config.ts` | Playwright config with webServer auto-start, chromium project |
 | `e2e/library-features.spec.ts` | 19 E2E tests (removed Google Fonts panel test), updated for grid-default view, **sampled card name validation** (200 max), **L+G badge support** in source badge tests |
+| `src/types/index.ts` | Added `VariableAxis` interface, `isVariable`/`variableAxes` on `StoredFontMeta`, `hasVariable` on `FontFamily` |
 | `package.json` | Added `wawoff2` dependency, **`build:google-db` npm script**. Removed `adm-zip`, `@types/adm-zip` |
 | `tsconfig.server.json` | Added `src/types/wawoff2.d.ts`, `src/lib/fontNameTokens.ts`, and `src/types/index.ts` to include |
 | `.gitignore` | Added `google-fonts/` |
@@ -310,3 +313,4 @@ Database: `{ version: 1, fonts: StoredFont[] }` in `fonts-db.json`, atomic write
 - **Semi-advanced filters**: Style count (min/max number inputs) and language/script filters (exclude basic-Latin-only checkbox, require-script multi-select pills) are shown in the Advanced Filters section. All are included in the "Reset all" logic. Script pills show only scripts detected across the loaded font database (`availableScripts` useMemo).
 - **Grid centering**: Library grid view uses `auto-fill` with `minmax(160px, 210px)` and `justify-content: center` instead of fixed breakpoint columns. Cards maintain consistent 160-210px width and center when fewer cards than a full row remain after filtering.
 - **Playwright env variable**: The Cursor sandbox sets `PLAYWRIGHT_BROWSERS_PATH` to a sandbox-specific temp dir. Tests must run with `unset PLAYWRIGHT_BROWSERS_PATH` or outside the sandbox (`required_permissions: ["all"]`) to find the installed browsers at `~/Library/Caches/ms-playwright/`.
+- **Variable font support**: Scanner detects `fvar` table via `font.tables.fvar` (cast to `any`), extracts axes data (tag, min, default, max, human-readable name). `isVariable` and `variableAxes` stored on `StoredFont`/`StoredFontMeta`. `FontFamily.hasVariable` computed by `groupByFamily()` via `members.some(f => f.isVariable)`. Library shows teal "VF" badge on family cards (both list and grid views). "Variable only" checkbox in advanced filters filters by `hasVariable`. AnalyzeView extracts axes from parsed font's fvar table, shows interactive range sliders with live CSS `font-variation-settings` preview, and displays axis info (name, min–max, default) in sidebar. `compute-metrics` endpoint populates variable fields for existing fonts.

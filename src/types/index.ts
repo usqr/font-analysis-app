@@ -102,6 +102,14 @@ export interface GlyphSvg {
   advWidth: number;
 }
 
+export interface VariableAxis {
+  tag: string;
+  minValue: number;
+  defaultValue: number;
+  maxValue: number;
+  name?: string;
+}
+
 export interface StoredFontMeta {
   id: string;
   filePath: string;
@@ -127,6 +135,8 @@ export interface StoredFontMeta {
   glyphSvgs?: Record<string, GlyphSvg>;
   analysis?: FullAnalysis;
   scriptSupport?: string[];
+  isVariable?: boolean;
+  variableAxes?: VariableAxis[];
 }
 
 export interface StoredFontData {
@@ -143,6 +153,7 @@ export interface FontFamily {
   source?: FontSource;
   sources?: FontSource[];
   starred?: boolean;
+  hasVariable?: boolean;
 }
 
 export interface FontDatabaseResponse {

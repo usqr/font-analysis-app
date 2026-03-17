@@ -142,7 +142,8 @@ export function groupByFamily(fonts: StoredFontMeta[], starredFamilies?: Set<str
     const sources = Array.from(sourcesSet) as FontSource[];
     const dominantSource = sources.includes('local') ? 'local' as FontSource : sources[0];
     const fKey = familyKey(name);
-    families.push({ familyName: name, fonts: members, source: dominantSource, sources, starred: starredFamilies?.has(fKey) });
+    const hasVariable = members.some((f) => f.isVariable);
+    families.push({ familyName: name, fonts: members, source: dominantSource, sources, starred: starredFamilies?.has(fKey), ...(hasVariable ? { hasVariable } : {}) });
   }
 
   families.sort((a, b) => a.familyName.localeCompare(b.familyName));

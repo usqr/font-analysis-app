@@ -66,6 +66,7 @@ export function LibraryView() {
   const [maxStyles, setMaxStyles] = useState(999);
   const [excludeBasicLatinOnly, setExcludeBasicLatinOnly] = useState(false);
   const [requiredScripts, setRequiredScripts] = useState<Set<string>>(new Set());
+  const [showVariableOnly, setShowVariableOnly] = useState(false);
 
   const loadDatabase = useCallback(async () => {
     try {
@@ -450,8 +451,12 @@ export function LibraryView() {
       }
     }
 
+    if (showVariableOnly) {
+      result = result.filter((f) => f.hasVariable);
+    }
+
     return result;
-  }, [searchAndCatFiltered, showAdvancedFilters, contrastRange, weightRange, widthRange, xHeightRange, familyMetrics, minStyles, maxStyles, excludeBasicLatinOnly, requiredScripts]);
+  }, [searchAndCatFiltered, showAdvancedFilters, contrastRange, weightRange, widthRange, xHeightRange, familyMetrics, minStyles, maxStyles, excludeBasicLatinOnly, requiredScripts, showVariableOnly]);
 
   const rangesInitialized = useRef(false);
   useEffect(() => {
@@ -480,6 +485,7 @@ export function LibraryView() {
     setMaxStyles(999);
     setExcludeBasicLatinOnly(false);
     setRequiredScripts(new Set());
+    setShowVariableOnly(false);
     if (histogramValues.contrast.length > 0) {
       const sorted = (a: number[]) => { const s = [...a].sort((x, y) => x - y); return [s[0], s[s.length - 1]] as [number, number]; };
       setContrastRange(sorted(histogramValues.contrast));
@@ -670,7 +676,7 @@ export function LibraryView() {
                 {cat.label}
               </button>
             ))}
-            {(selectedCategory !== null || selectedSource !== null || search.trim() || showStarredOnly || excludeBasicLatinOnly || requiredScripts.size > 0 || minStyles > 1 || maxStyles < 999) && (
+            {(selectedCategory !== null || selectedSource !== null || search.trim() || showStarredOnly || excludeBasicLatinOnly || requiredScripts.size > 0 || minStyles > 1 || maxStyles < 999 || showVariableOnly) && (
               <button
                 onClick={resetAllFilters}
                 className="ml-1 text-xs text-neutral-500 hover:text-neutral-300"
@@ -773,6 +779,16 @@ export function LibraryView() {
                   className="rounded border-neutral-600 bg-neutral-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-0"
                 />
                 <span className="text-xs text-neutral-400">Exclude basic-Latin-only</span>
+              </label>
+
+              <label className="flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={showVariableOnly}
+                  onChange={(e) => setShowVariableOnly(e.target.checked)}
+                  className="rounded border-neutral-600 bg-neutral-800 text-teal-500 focus:ring-teal-500 focus:ring-offset-0"
+                />
+                <span className="text-xs text-neutral-400">Variable only</span>
               </label>
 
               {availableScripts.length > 0 && (
@@ -1299,6 +1315,17 @@ function SourceBadge({ source, sources }: { source?: string; sources?: string[] 
   );
 }
 
+function VariableBadge() {
+  return (
+    <span
+      className="inline-flex h-5 items-center justify-center rounded-full bg-teal-500/15 px-1 text-[10px] font-bold text-teal-400"
+      title="Variable Font"
+    >
+      VF
+    </span>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /*  List view: FamilyCard                                              */
 /* ------------------------------------------------------------------ */
@@ -1459,6 +1486,7 @@ function FamilyCard({
               : <span className="text-neutral-700 hover:text-amber-400/60">&#9734;</span>}
           </button>
           <SourceBadge source={family.source} sources={family.sources} />
+          {family.hasVariable && <VariableBadge />}
         </div>
         {cardState !== 'collapsed' && (
           <button
@@ -1733,6 +1761,7 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
           {anySelected ? selected.size : '+'}
         </button>
         <SourceBadge source={family.source} sources={family.sources} />
+        {family.hasVariable && <VariableBadge />}
       </div>
 
       {showVariants && (
