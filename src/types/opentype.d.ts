@@ -45,7 +45,7 @@ declare module 'opentype.js' {
     strokeWidth: number;
     draw(ctx: CanvasRenderingContext2D): void;
     getBoundingBox(): BoundingBox;
-    toPathData(options?: object): string;
+    toPathData(decimalPlaces?: number): string;
     toSVG(options?: object): string;
   }
 

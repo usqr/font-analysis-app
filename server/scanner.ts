@@ -3,7 +3,8 @@ import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import * as opentype from 'opentype.js';
 import { decompress as woff2Decompress } from 'wawoff2';
-import type { StoredFont, FontMetrics, FontCategory, FontSource, GlyphSvg } from './database.js';
+import type { StoredFont, FontMetrics, FontCategory, FontSource, GlyphSvg, FullAnalysis } from './database.js';
+import type { ContrastResult, XHeightResult, ProportionsResult, WeightResult, SpacingResult } from '../src/types/index.js';
 
 const FONT_EXTENSIONS = new Set(['.ttf', '.otf', '.woff', '.woff2']);
 
@@ -477,6 +478,115 @@ export function extractGlyphSvgs(font: opentype.Font): Record<string, GlyphSvg> 
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+function computeContrastForGlyph(font: opentype.Font, char: string): ContrastResult | null {
+  const glyph = font.charToGlyph(char);
+  if (!glyph || glyph.index === 0) return null;
+
+  const glyphPath = glyph.getPath(0, 0, font.unitsPerEm);
+  const contourCmds = splitContoursFromCommands(glyphPath.commands as PathCmd[]);
+  const polys = contourCmds.map(flattenCommands).filter(p => p.length >= 3);
+  const areas = polys.map(p => ({ pts: p, area: Math.abs(polyArea(p)) }));
+  areas.sort((a, b) => b.area - a.area);
+  if (areas.length < 2) return null;
+
+  const outer = areas[0].pts;
+  const inner = areas[1].pts;
+  let maxDist = 0, minDist = Infinity;
+  let thickOuter = outer[0], thickInner = inner[0];
+  let thinOuter = outer[0], thinInner = inner[0];
+
+  const step = Math.max(1, Math.floor(outer.length / 120));
+  for (let i = 0; i < outer.length; i += step) {
+    const op = outer[i];
+    let closest = Infinity;
+    let closestPt = inner[0];
+    for (const ip of inner) {
+      const d = Math.hypot(op.x - ip.x, op.y - ip.y);
+      if (d < closest) { closest = d; closestPt = ip; }
+    }
+    if (closest > maxDist) { maxDist = closest; thickOuter = op; thickInner = closestPt; }
+    if (closest < minDist) { minDist = closest; thinOuter = op; thinInner = closestPt; }
+  }
+
+  if (maxDist === 0 || !isFinite(minDist) || minDist === 0) return null;
+
+  return {
+    glyph: char,
+    maxWidth: maxDist,
+    minWidth: minDist,
+    contrastRatio: maxDist / minDist,
+    thickestSample: { outerPoint: thickOuter, innerPoint: thickInner, width: maxDist, lengthAlongPath: 0 },
+    thinnestSample: { outerPoint: thinOuter, innerPoint: thinInner, width: minDist, lengthAlongPath: 0 },
+    allSamples: [],
+  };
+}
+
+export function computeFullAnalysis(font: opentype.Font): FullAnalysis {
+  const contrastLower = computeContrastForGlyph(font, 'o');
+  const contrastUpper = computeContrastForGlyph(font, 'O');
+
+  let xHeight: XHeightResult | null = null;
+  const xGlyph = font.charToGlyph('x');
+  const tGlyph = font.charToGlyph('T');
+  if (xGlyph && tGlyph) {
+    const xBB = xGlyph.getBoundingBox();
+    const tBB = tGlyph.getBoundingBox();
+    const xH = xBB.y2 - xBB.y1;
+    const capH = tBB.y2 - tBB.y1;
+    if (xH > 0 && capH > 0) {
+      xHeight = {
+        xHeight: xH, capHeight: capH,
+        ascender: font.ascender, descender: font.descender, unitsPerEm: font.unitsPerEm,
+        xHeightToCapHeight: xH / capH, xHeightToEm: xH / font.unitsPerEm, capHeightToEm: capH / font.unitsPerEm,
+      };
+    }
+  }
+
+  let proportions: ProportionsResult | null = null;
+  const oGlyph = font.charToGlyph('o');
+  if (oGlyph) {
+    const bb = oGlyph.getBoundingBox();
+    const w = bb.x2 - bb.x1;
+    const h = bb.y2 - bb.y1;
+    if (w > 0 && h > 0) {
+      proportions = { glyphWidth: w, glyphHeight: h, widthToHeightRatio: w / h, advanceWidth: oGlyph.advanceWidth ?? 0 };
+    }
+  }
+
+  let weight: WeightResult | null = null;
+  if (oGlyph) {
+    const bb = oGlyph.getBoundingBox();
+    const w = bb.x2 - bb.x1;
+    const h = bb.y2 - bb.y1;
+    if (w > 0 && h > 0) {
+      const oPath = oGlyph.getPath(0, 0, font.unitsPerEm);
+      const cs = splitContoursFromCommands(oPath.commands as PathCmd[]);
+      const ps = cs.map(flattenCommands).filter(p => p.length >= 3);
+      const sortedAreas = ps.map(p => ({ area: Math.abs(polyArea(p)) }));
+      sortedAreas.sort((a, b) => b.area - a.area);
+      const filledArea = sortedAreas.length >= 2 ? sortedAreas[0].area - sortedAreas[1].area
+        : sortedAreas.length === 1 ? sortedAreas[0].area : 0;
+      const bbArea = w * h;
+      const fillRatio = bbArea > 0 ? filledArea / bbArea : 0;
+      const renderScale = 200 / font.unitsPerEm;
+      const totalPixels = Math.ceil(w * renderScale) * Math.ceil(h * renderScale);
+      const filledPixels = Math.round(totalPixels * Math.max(0, Math.min(1, fillRatio)));
+      weight = { filledPixels, totalPixels, fillRatio: Math.max(0, Math.min(1, fillRatio)), fillPercentage: Math.max(0, Math.min(100, fillRatio * 100)) };
+    }
+  }
+
+  let spacing: SpacingResult | null = null;
+  const mGlyph = font.charToGlyph('M');
+  if (mGlyph && (mGlyph.advanceWidth ?? 0) > 0) {
+    const testStr = 'Hamburgerfonsz';
+    const totalAdv = font.getAdvanceWidth(testStr, font.unitsPerEm);
+    const mAdv = mGlyph.advanceWidth!;
+    spacing = { testString: testStr, totalAdvanceWidth: totalAdv, mAdvanceWidth: mAdv, ratio: totalAdv / mAdv, charCount: testStr.length, avgCharWidth: totalAdv / testStr.length };
+  }
+
+  return { contrastLower, contrastUpper, xHeight, proportions, weight, spacing };
+}
+
 export interface ScanFontResult {
   meta: StoredFont;
 }
@@ -563,6 +673,7 @@ export async function scanFont(filePath: string, source: FontSource = 'local'): 
     const metrics = computeFontMetrics(font) ?? undefined;
     const category = classifyFont(font, metrics);
     const glyphSvgs = extractGlyphSvgs(font);
+    const analysis = computeFullAnalysis(font);
 
     return {
       meta: {
@@ -586,6 +697,7 @@ export async function scanFont(filePath: string, source: FontSource = 'local'): 
         category,
         source,
         ...(glyphSvgs ? { glyphSvgs } : {}),
+        analysis,
       },
     };
   } catch {

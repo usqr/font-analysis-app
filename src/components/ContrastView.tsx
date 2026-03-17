@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { FontData, ContrastResult } from '../types';
+import type { FontData, ContrastResult, XHeightResult } from '../types';
 import { drawGlyph } from '../lib/pathUtils';
 import { useCanvasResize } from '../lib/useCanvasResize';
 import { analyzeXHeight } from '../analysis/xHeight';
@@ -16,6 +16,7 @@ interface Props {
   fontData: FontData;
   contrastLower: ContrastResult | null;
   contrastUpper: ContrastResult | null;
+  xHeight?: XHeightResult | null;
   canvasRef?: React.RefObject<HTMLCanvasElement | null>;
 }
 
@@ -23,6 +24,7 @@ export function ContrastView({
   fontData,
   contrastLower,
   contrastUpper,
+  xHeight: precomputedXHeight,
   canvasRef: externalRef,
 }: Props) {
   const internalRef = useRef<HTMLCanvasElement>(null);
@@ -62,7 +64,7 @@ export function ContrastView({
     }
 
     const { font } = fontData;
-    const xhResult = analyzeXHeight(font);
+    const xhResult = precomputedXHeight ?? analyzeXHeight(font);
     const totalHeight = font.ascender - font.descender;
     const padding = 60;
     const leftMargin = 100;
@@ -205,7 +207,7 @@ export function ContrastView({
     ctx.fillStyle = '#3b82f6';
     ctx.fillRect(leftMargin + 150, ly - 4, 14, 4);
     ctx.fillText('Thinnest stroke', leftMargin + 170, ly);
-  }, [fontData, contrastLower, contrastUpper, ref, resizeCount]);
+  }, [fontData, contrastLower, contrastUpper, precomputedXHeight, ref, resizeCount]);
 
   return (
     <canvas

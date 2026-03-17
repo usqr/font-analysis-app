@@ -125,6 +125,7 @@ export interface StoredFontMeta {
   tags?: string[];
   source?: FontSource;
   glyphSvgs?: Record<string, GlyphSvg>;
+  analysis?: FullAnalysis;
 }
 
 export interface StoredFontData {

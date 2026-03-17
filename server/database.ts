@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { FullAnalysis } from '../src/types/index.js';
 
 export type FontCategory = 'serif' | 'sans-serif' | 'monospace' | 'display' | 'script';
 export type FontSource = 'local' | 'google';
+export type { FullAnalysis };
 
 export interface FontMetrics {
   contrast: number;
@@ -39,6 +41,7 @@ export interface StoredFont {
   tags?: string[];
   source?: FontSource;
   glyphSvgs?: Record<string, GlyphSvg>;
+  analysis?: FullAnalysis;
 }
 
 export interface FontDatabase {

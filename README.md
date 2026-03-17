@@ -7,7 +7,7 @@ A desktop-oriented web app for scanning, storing, analyzing, and comparing font 
 - **Font Library** — Scan local folders or browse 3500+ Google Fonts from the included starter database. Fonts are served directly from disk (no base64 backups). Grid view (default) uses pre-extracted SVG glyph vectors for instant "Aa" previews. Fonts are grouped by family with width tabs, style toggles, and collapsible cards (single toggle button). Star favourite font families and add to compare from either view.
 - **Filtering** — Source filter (Local/Google), category radio buttons (Serif, Sans-Serif, Monospace, Display, Script), starred-only filter, text search, and histogram-based range filters for contrast, weight, width, and x-height.
 - **Manual Recategorization** — Each family card and the Analyze view header show a colored category badge; click to override the auto-detected category. Works for both local and Google Fonts. Bulk Edit mode allows selecting multiple families and applying category changes or tags in batch via a floating action bar. Overrides persist in a separate `font-overrides.json` file, surviving library clears and full rescans.
-- **Analyze** — Per-font analysis views: stroke contrast (with reference lines matching x-height view), x-height, proportions, weight distribution, spacing, and a paginated glyph grid with web font rendering and OTF feature filtering. Lazy per-tab loading for fast initial render. Sidebar shows OpenType features and raw metadata (name, OS/2, head, post tables).
+- **Analyze** — Per-font analysis views: stroke contrast (with reference lines matching x-height view), x-height, proportions, weight distribution, spacing, and a paginated glyph grid with web font rendering and OTF feature filtering. Analysis is pre-computed server-side at scan time and stored in the database for instant loading. Sidebar shows OpenType features and raw metadata (name, OS/2, head, post tables).
 - **Compare** — Overlay multiple fonts on a shared canvas with normalize toggle and auto-fit text sizing. Consistent color assignment across font toggles. Collapsible info panel with drag-resizable width.
 - **Format Support** — TTF, OTF, WOFF, WOFF2 (decompressed via wawoff2).
 - **Smart Naming** — Handles URW-style abbreviated names (including fonts without preferredFamilyName), typographic subfamily (name ID 17), super-family grouping across width and type variants (e.g., Alfabet types, Bungee visual variants), and fallback naming from filenames. Supports space-separated Noto-style names.
@@ -94,7 +94,7 @@ google-fonts-db.json    # Pre-built Google Fonts database (committed)
 | POST | `/api/database` | Overwrite database |
 | DELETE | `/api/database` | Wipe database |
 | POST | `/api/database/dedup` | Deduplicate fonts |
-| POST | `/api/database/compute-metrics` | Compute metrics + reclassify + extract SVGs |
+| POST | `/api/database/compute-metrics` | Compute metrics + analysis + reclassify + extract SVGs |
 | GET | `/api/fonts/:id/file` | Serve font binary from disk |
 | GET | `/api/fonts/:id/data` | Get font base64 data (read from disk) |
 | PUT | `/api/fonts/:id/category` | Set category override |

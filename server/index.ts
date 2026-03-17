@@ -10,7 +10,7 @@ import {
   applyOverrides, saveOverride, saveOverrides, readOverrides,
   readGoogleFontsDb, findFontById,
 } from './database.js';
-import { scanFolder, scanFont, walkDir, computeFontMetrics, classifyFont, extractGlyphSvgs } from './scanner.js';
+import { scanFolder, scanFont, walkDir, computeFontMetrics, classifyFont, extractGlyphSvgs, computeFullAnalysis } from './scanner.js';
 
 const app = express();
 const PORT = 3001;
@@ -234,6 +234,10 @@ app.post('/api/database/compute-metrics', async (_req, res) => {
       if (!font.glyphSvgs) {
         const svgs = extractGlyphSvgs(parsed);
         if (svgs) { font.glyphSvgs = svgs; updated++; }
+      }
+      if (!font.analysis) {
+        font.analysis = computeFullAnalysis(parsed);
+        updated++;
       }
     } catch {
       // skip fonts that fail to parse

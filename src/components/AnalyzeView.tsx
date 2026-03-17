@@ -235,12 +235,12 @@ export function AnalyzeView() {
   }, [ensureTabAnalysis]);
 
   useEffect(() => {
-    if (!fontId) return;
+    if (!fontId) { setFamilyMembers([]); setCurrentMeta(null); return; }
     let cancelled = false;
     setLoading(true);
 
-    fetchFontData(fontId)
-      .then((data) => {
+    Promise.all([fetchFontData(fontId), fetchDatabase()])
+      .then(([data, db]) => {
         if (cancelled) return;
         const binary = Uint8Array.from(atob(data.base64Data), (c) => c.charCodeAt(0));
         const font = opentype.parse(binary.buffer as ArrayBuffer);
@@ -254,7 +254,37 @@ export function AnalyzeView() {
           descender: font.descender,
           glyphCount: font.glyphs.length,
         };
-        runAnalysis(fd);
+
+        const current = db.fonts.find((f) => f.id === fontId);
+        if (current) {
+          setCurrentMeta(current);
+          setEffectiveCategory(current.categoryOverride ?? current.category ?? null);
+          const baseKey = superFamilyName(current);
+          const currentSource = current.source ?? 'local';
+          const members = db.fonts.filter((f) => superFamilyName(f) === baseKey && (f.source ?? 'local') === currentSource);
+          setFamilyMembers(members);
+          const fKey = familyKey(currentSource, baseKey);
+          setFamilyStarKey(fKey);
+          setFamilyStarred((db.starredFamilies ?? []).includes(fKey));
+        }
+
+        if (current?.analysis) {
+          fontDataRef.current = fd;
+          setFontData(fd);
+          setOtfFeatures(extractOTFFeatures(fd.font));
+          setRawMeta(extractRawMetadata(fd.font));
+          const a = current.analysis;
+          analysisCache.current = { ...a };
+          setAnalysis(a);
+          (window as any).__FA_ANALYSIS__ = a;
+          (window as any).__FA_FONT_DATA__ = {
+            unitsPerEm: fd.font.unitsPerEm,
+            oBBox: fd.font.charToGlyph('o')?.getBoundingBox(),
+            OBBox: fd.font.charToGlyph('O')?.getBoundingBox(),
+          };
+        } else {
+          runAnalysis(fd);
+        }
       })
       .catch((e) => {
         console.error('Failed to load font from library:', e);
@@ -265,26 +295,6 @@ export function AnalyzeView() {
 
     return () => { cancelled = true; };
   }, [fontId, runAnalysis]);
-
-  useEffect(() => {
-    if (!fontId) { setFamilyMembers([]); setCurrentMeta(null); return; }
-    let cancelled = false;
-    fetchDatabase().then((db) => {
-      if (cancelled) return;
-      const current = db.fonts.find((f) => f.id === fontId);
-      if (!current) return;
-      setCurrentMeta(current);
-      setEffectiveCategory(current.categoryOverride ?? current.category ?? null);
-      const baseKey = superFamilyName(current);
-      const currentSource = current.source ?? 'local';
-      const members = db.fonts.filter((f) => superFamilyName(f) === baseKey && (f.source ?? 'local') === currentSource);
-      setFamilyMembers(members);
-      const fKey = familyKey(currentSource, baseKey);
-      setFamilyStarKey(fKey);
-      setFamilyStarred((db.starredFamilies ?? []).includes(fKey));
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [fontId]);
 
   useEffect(() => {
     const data = fontDataRef.current;
@@ -643,6 +653,7 @@ export function AnalyzeView() {
                   fontData={fontData}
                   contrastLower={analysis?.contrastLower ?? null}
                   contrastUpper={analysis?.contrastUpper ?? null}
+                  xHeight={analysis?.xHeight}
                   canvasRef={canvasRef}
                 />
               )}
