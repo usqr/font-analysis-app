@@ -71,8 +71,8 @@ export function ProportionsView({ fontData, result, canvasRef: externalRef }: Pr
 
     const circleR = Math.min(rectW, rectH) / 2;
     ctx.beginPath();
-    ctx.strokeStyle = '#22c55e';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#ff0080';
+    ctx.lineWidth = 2.5;
     ctx.setLineDash([6, 3]);
     ctx.arc(centerX, centerY, circleR, 0, Math.PI * 2);
     ctx.stroke();

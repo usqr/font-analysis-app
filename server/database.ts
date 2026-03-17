@@ -42,6 +42,7 @@ export interface StoredFont {
   source?: FontSource;
   glyphSvgs?: Record<string, GlyphSvg>;
   analysis?: FullAnalysis;
+  scriptSupport?: string[];
 }
 
 export interface FontDatabase {

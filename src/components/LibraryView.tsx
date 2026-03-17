@@ -62,6 +62,10 @@ export function LibraryView() {
   const [bulkEditMode, setBulkEditMode] = useState(false);
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
   const [allTags, setAllTags] = useState<string[]>([]);
+  const [minStyles, setMinStyles] = useState(1);
+  const [maxStyles, setMaxStyles] = useState(999);
+  const [excludeBasicLatinOnly, setExcludeBasicLatinOnly] = useState(false);
+  const [requiredScripts, setRequiredScripts] = useState<Set<string>>(new Set());
 
   const loadDatabase = useCallback(async () => {
     try {
@@ -342,6 +346,20 @@ export function LibraryView() {
     return map;
   }, [families]);
 
+  const availableScripts = useMemo(() => {
+    const scripts = new Set<string>();
+    for (const fam of families) {
+      for (const f of fam.fonts) {
+        if (f.scriptSupport) {
+          for (const s of f.scriptSupport) scripts.add(s);
+        }
+      }
+    }
+    const ordered = ['Latin Extended', 'Cyrillic', 'Greek', 'Arabic', 'Hebrew', 'Devanagari',
+      'Bengali', 'Tamil', 'Telugu', 'Thai', 'Georgian', 'Armenian', 'CJK', 'Hangul', 'Japanese Kana', 'Vietnamese'];
+    return ordered.filter((s) => scripts.has(s));
+  }, [families]);
+
   const collectMetricValues = useCallback((fams: FontFamily[]) => {
     const contrast: number[] = [];
     const weight: number[] = [];
@@ -398,10 +416,38 @@ export function LibraryView() {
           && m.width >= widthRange[0] && m.width <= widthRange[1]
           && m.xHeight >= xHeightRange[0] && m.xHeight <= xHeightRange[1];
       });
+
+      if (minStyles > 1 || maxStyles < 999) {
+        result = result.filter((f) => f.fonts.length >= minStyles && f.fonts.length <= maxStyles);
+      }
+
+      if (excludeBasicLatinOnly) {
+        result = result.filter((f) => {
+          return f.fonts.some((font) => {
+            if (!font.scriptSupport) return true;
+            return font.scriptSupport.some((s) => s !== 'Basic Latin');
+          });
+        });
+      }
+
+      if (requiredScripts.size > 0) {
+        result = result.filter((f) => {
+          const familyScripts = new Set<string>();
+          for (const font of f.fonts) {
+            if (font.scriptSupport) {
+              for (const s of font.scriptSupport) familyScripts.add(s);
+            }
+          }
+          for (const req of requiredScripts) {
+            if (!familyScripts.has(req)) return false;
+          }
+          return true;
+        });
+      }
     }
 
     return result;
-  }, [searchAndCatFiltered, showAdvancedFilters, contrastRange, weightRange, widthRange, xHeightRange, familyMetrics]);
+  }, [searchAndCatFiltered, showAdvancedFilters, contrastRange, weightRange, widthRange, xHeightRange, familyMetrics, minStyles, maxStyles, excludeBasicLatinOnly, requiredScripts]);
 
   const rangesInitialized = useRef(false);
   useEffect(() => {
@@ -426,6 +472,10 @@ export function LibraryView() {
     setSelectedSource(null);
     setShowStarredOnly(false);
     setSearch('');
+    setMinStyles(1);
+    setMaxStyles(999);
+    setExcludeBasicLatinOnly(false);
+    setRequiredScripts(new Set());
     if (histogramValues.contrast.length > 0) {
       const sorted = (a: number[]) => { const s = [...a].sort((x, y) => x - y); return [s[0], s[s.length - 1]] as [number, number]; };
       setContrastRange(sorted(histogramValues.contrast));
@@ -614,7 +664,7 @@ export function LibraryView() {
                 {cat.label}
               </button>
             ))}
-            {(selectedCategory !== null || selectedSource !== null || search.trim() || showStarredOnly) && (
+            {(selectedCategory !== null || selectedSource !== null || search.trim() || showStarredOnly || excludeBasicLatinOnly || requiredScripts.size > 0 || minStyles > 1 || maxStyles < 999) && (
               <button
                 onClick={resetAllFilters}
                 className="ml-1 text-xs text-neutral-500 hover:text-neutral-300"
@@ -679,6 +729,76 @@ export function LibraryView() {
                   setXHeightRange([s[0], s[s.length - 1]]);
                 }}
               />
+            </div>
+          )}
+          {showAdvancedFilters && (
+            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-neutral-500">Styles:</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={minStyles}
+                  onChange={(e) => setMinStyles(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-14 rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-300 focus:border-blue-500 focus:outline-none"
+                />
+                <span className="text-xs text-neutral-600">–</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={maxStyles >= 999 ? '' : maxStyles}
+                  placeholder="∞"
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value);
+                    setMaxStyles(isNaN(v) ? 999 : Math.max(1, v));
+                  }}
+                  className="w-14 rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-300 focus:border-blue-500 focus:outline-none"
+                />
+                {(minStyles > 1 || maxStyles < 999) && (
+                  <button onClick={() => { setMinStyles(1); setMaxStyles(999); }} className="text-xs text-neutral-500 hover:text-neutral-300">✕</button>
+                )}
+              </div>
+
+              <label className="flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={excludeBasicLatinOnly}
+                  onChange={(e) => setExcludeBasicLatinOnly(e.target.checked)}
+                  className="rounded border-neutral-600 bg-neutral-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-0"
+                />
+                <span className="text-xs text-neutral-400">Exclude basic-Latin-only</span>
+              </label>
+
+              {availableScripts.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-neutral-500">Require:</span>
+                  <div className="flex flex-wrap gap-1">
+                    {availableScripts.map((script) => (
+                      <button
+                        key={script}
+                        onClick={() => {
+                          setRequiredScripts((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(script)) next.delete(script);
+                            else next.add(script);
+                            return next;
+                          });
+                        }}
+                        className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                          requiredScripts.has(script)
+                            ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400'
+                            : 'border-neutral-700 text-neutral-500 hover:border-neutral-500 hover:text-neutral-400'
+                        }`}
+                      >
+                        {script}
+                      </button>
+                    ))}
+                  </div>
+                  {requiredScripts.size > 0 && (
+                    <button onClick={() => setRequiredScripts(new Set())} className="text-xs text-neutral-500 hover:text-neutral-300">✕</button>
+                  )}
+                </div>
+              )}
             </div>
           )}
           {showAdvancedFilters && histogramValues.contrast.length === 0 && !metricsReady && (
@@ -891,7 +1011,7 @@ export function LibraryView() {
             )}
           </div>
         ) : viewMode === 'grid' ? (
-          <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6" data-testid="grid-view">
+          <div className="grid gap-4 justify-center" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 210px))' }} data-testid="grid-view">
             {filteredFamilies.map((family) => (
               <GridFamilyCard
                 key={family.familyName}

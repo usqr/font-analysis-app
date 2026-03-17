@@ -10,7 +10,7 @@ import {
   applyOverrides, saveOverride, saveOverrides, readOverrides,
   readGoogleFontsDb, findFontById,
 } from './database.js';
-import { scanFolder, scanFont, walkDir, computeFontMetrics, classifyFont, extractGlyphSvgs, computeFullAnalysis } from './scanner.js';
+import { scanFolder, scanFont, walkDir, computeFontMetrics, classifyFont, extractGlyphSvgs, computeFullAnalysis, detectScriptSupport } from './scanner.js';
 
 const app = express();
 const PORT = 3001;
@@ -222,9 +222,15 @@ app.post('/api/database/compute-metrics', async (_req, res) => {
       const ab = fontBuffer.buffer.slice(fontBuffer.byteOffset, fontBuffer.byteOffset + fontBuffer.byteLength);
       const parsed = opentype.parse(ab as ArrayBuffer);
 
-      if (!font.metrics) {
-        const m = computeFontMetrics(parsed);
-        if (m) { font.metrics = m; updated++; }
+      const m = computeFontMetrics(parsed);
+      if (m) {
+        if (!font.metrics || font.metrics.contrast !== m.contrast || font.metrics.weight !== m.weight) {
+          font.metrics = m;
+          updated++;
+        }
+      } else if (font.metrics) {
+        font.metrics = undefined;
+        updated++;
       }
       const newCat = classifyFont(parsed, font.metrics);
       if (font.category !== newCat) {
@@ -238,6 +244,10 @@ app.post('/api/database/compute-metrics', async (_req, res) => {
       if (!font.analysis) {
         font.analysis = computeFullAnalysis(parsed);
         updated++;
+      }
+      if (!font.scriptSupport) {
+        const scripts = detectScriptSupport(parsed);
+        if (scripts.length > 0) { font.scriptSupport = scripts; updated++; }
       }
     } catch {
       // skip fonts that fail to parse

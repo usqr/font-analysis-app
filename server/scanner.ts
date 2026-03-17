@@ -247,7 +247,7 @@ export function computeFontMetrics(font: opentype.Font): FontMetrics | null {
     const oGlyph = font.charToGlyph('o');
     const xGlyph = font.charToGlyph('x');
     const tGlyph = font.charToGlyph('T');
-    if (!oGlyph || !xGlyph) return null;
+    if (!oGlyph || !xGlyph || oGlyph.index === 0 || xGlyph.index === 0) return null;
 
     const oBB = oGlyph.getBoundingBox();
     const xBB = xGlyph.getBoundingBox();
@@ -294,7 +294,7 @@ export function computeFontMetrics(font: opentype.Font): FontMetrics | null {
       fillWeight = bbArea > 0 ? areas[0].area / bbArea : 0;
     }
 
-    const tBB = tGlyph?.getBoundingBox();
+    const tBB = (tGlyph && tGlyph.index !== 0) ? tGlyph.getBoundingBox() : null;
     if (tBB) {
       const capH = tBB.y2 - tBB.y1;
       if (capH > 0) {
@@ -318,7 +318,7 @@ function isMonoByWidths(font: opentype.Font): boolean {
   const widths = new Set<number>();
   for (const ch of chars) {
     const g = font.charToGlyph(ch);
-    if (g && g.advanceWidth != null && g.advanceWidth > 0) {
+    if (g && g.index !== 0 && g.advanceWidth != null && g.advanceWidth > 0) {
       widths.add(g.advanceWidth);
     }
   }
@@ -347,7 +347,7 @@ function classifyByPanose(os2: any): FontCategory | null {
 
 function detectSerifFromGlyph(font: opentype.Font): 'serif' | 'sans-serif' | null {
   const iGlyph = font.charToGlyph('I');
-  if (!iGlyph) return null;
+  if (!iGlyph || iGlyph.index === 0) return null;
 
   const bb = iGlyph.getBoundingBox();
   const gW = bb.x2 - bb.x1;
@@ -461,6 +461,53 @@ export function classifyFont(font: opentype.Font, metrics?: FontMetrics | null):
   return 'display';
 }
 
+// Unicode script ranges for language/script detection
+const SCRIPT_RANGES: { name: string; start: number; end: number; minGlyphs: number }[] = [
+  { name: 'Basic Latin', start: 0x0020, end: 0x007F, minGlyphs: 26 },
+  { name: 'Latin Extended', start: 0x0080, end: 0x024F, minGlyphs: 30 },
+  { name: 'Cyrillic', start: 0x0400, end: 0x04FF, minGlyphs: 30 },
+  { name: 'Greek', start: 0x0370, end: 0x03FF, minGlyphs: 20 },
+  { name: 'Arabic', start: 0x0600, end: 0x06FF, minGlyphs: 20 },
+  { name: 'Hebrew', start: 0x0590, end: 0x05FF, minGlyphs: 20 },
+  { name: 'Devanagari', start: 0x0900, end: 0x097F, minGlyphs: 20 },
+  { name: 'Thai', start: 0x0E00, end: 0x0E7F, minGlyphs: 20 },
+  { name: 'CJK', start: 0x4E00, end: 0x9FFF, minGlyphs: 100 },
+  { name: 'Hangul', start: 0xAC00, end: 0xD7AF, minGlyphs: 100 },
+  { name: 'Japanese Kana', start: 0x3040, end: 0x30FF, minGlyphs: 40 },
+  { name: 'Georgian', start: 0x10A0, end: 0x10FF, minGlyphs: 15 },
+  { name: 'Armenian', start: 0x0530, end: 0x058F, minGlyphs: 15 },
+  { name: 'Bengali', start: 0x0980, end: 0x09FF, minGlyphs: 15 },
+  { name: 'Tamil', start: 0x0B80, end: 0x0BFF, minGlyphs: 15 },
+  { name: 'Telugu', start: 0x0C00, end: 0x0C7F, minGlyphs: 15 },
+  { name: 'Vietnamese', start: 0x01A0, end: 0x01B0, minGlyphs: 4 },
+];
+
+export function detectScriptSupport(font: opentype.Font): string[] {
+  const counts = new Map<string, number>();
+  for (const range of SCRIPT_RANGES) counts.set(range.name, 0);
+
+  for (let i = 0; i < font.glyphs.length; i++) {
+    try {
+      const g = font.glyphs.get(i);
+      if (!g || g.unicode === undefined || g.unicode === null || g.unicode < 0) continue;
+      const cp = g.unicode;
+      for (const range of SCRIPT_RANGES) {
+        if (cp >= range.start && cp <= range.end) {
+          counts.set(range.name, (counts.get(range.name) ?? 0) + 1);
+        }
+      }
+    } catch { /* skip broken glyphs */ }
+  }
+
+  const supported: string[] = [];
+  for (const range of SCRIPT_RANGES) {
+    if ((counts.get(range.name) ?? 0) >= range.minGlyphs) {
+      supported.push(range.name);
+    }
+  }
+  return supported;
+}
+
 const SVG_CHARS = ['A', 'a', 'o', 'O', 'H', 'x', 'n'];
 
 export function extractGlyphSvgs(font: opentype.Font): Record<string, GlyphSvg> | undefined {
@@ -528,7 +575,7 @@ export function computeFullAnalysis(font: opentype.Font): FullAnalysis {
   let xHeight: XHeightResult | null = null;
   const xGlyph = font.charToGlyph('x');
   const tGlyph = font.charToGlyph('T');
-  if (xGlyph && tGlyph) {
+  if (xGlyph && xGlyph.index !== 0 && tGlyph && tGlyph.index !== 0) {
     const xBB = xGlyph.getBoundingBox();
     const tBB = tGlyph.getBoundingBox();
     const xH = xBB.y2 - xBB.y1;
@@ -544,7 +591,7 @@ export function computeFullAnalysis(font: opentype.Font): FullAnalysis {
 
   let proportions: ProportionsResult | null = null;
   const oGlyph = font.charToGlyph('o');
-  if (oGlyph) {
+  if (oGlyph && oGlyph.index !== 0) {
     const bb = oGlyph.getBoundingBox();
     const w = bb.x2 - bb.x1;
     const h = bb.y2 - bb.y1;
@@ -554,7 +601,7 @@ export function computeFullAnalysis(font: opentype.Font): FullAnalysis {
   }
 
   let weight: WeightResult | null = null;
-  if (oGlyph) {
+  if (oGlyph && oGlyph.index !== 0) {
     const bb = oGlyph.getBoundingBox();
     const w = bb.x2 - bb.x1;
     const h = bb.y2 - bb.y1;
@@ -577,7 +624,7 @@ export function computeFullAnalysis(font: opentype.Font): FullAnalysis {
 
   let spacing: SpacingResult | null = null;
   const mGlyph = font.charToGlyph('M');
-  if (mGlyph && (mGlyph.advanceWidth ?? 0) > 0) {
+  if (mGlyph && mGlyph.index !== 0 && (mGlyph.advanceWidth ?? 0) > 0) {
     const testStr = 'Hamburgerfonsz';
     const totalAdv = font.getAdvanceWidth(testStr, font.unitsPerEm);
     const mAdv = mGlyph.advanceWidth!;
@@ -674,6 +721,7 @@ export async function scanFont(filePath: string, source: FontSource = 'local'): 
     const category = classifyFont(font, metrics);
     const glyphSvgs = extractGlyphSvgs(font);
     const analysis = computeFullAnalysis(font);
+    const scriptSupport = detectScriptSupport(font);
 
     return {
       meta: {
@@ -698,6 +746,7 @@ export async function scanFont(filePath: string, source: FontSource = 'local'): 
         source,
         ...(glyphSvgs ? { glyphSvgs } : {}),
         analysis,
+        ...(scriptSupport.length > 0 ? { scriptSupport } : {}),
       },
     };
   } catch {
