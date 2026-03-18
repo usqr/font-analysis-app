@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { StoredFontMeta, FontFamily, FontCategory, FontSource, GlyphSvg } from '../types';
+import type { StoredFontMeta, FontFamily, FontCategory, FontSource, VariableAxis } from '../types';
 import type { ScanEvent, ScanProgressUpdate } from '../lib/api';
 import { fetchDatabase, scanFolderStream, pickFolder, deleteFont, refreshFont, updateFontPath, clearDatabase, deduplicateDatabase, computeMetrics, toggleStarFamily, fetchFontPaths, addFontPath, removeFontPath, bulkSetCategory, bulkSetTags, fetchAllTags } from '../lib/api';
 import { groupByFamily, variantLabel, groupByWidth, familyKey, type WidthStyleGroup } from '../lib/fontFamilies';
 import { useFontFace } from '../lib/useFontFace';
 import { HistogramFilter } from './HistogramFilter';
+import { getAxisInfo } from '../lib/axisDescriptions';
 
 const CATEGORIES: { id: FontCategory; label: string }[] = [
   { id: 'serif', label: 'Serif' },
@@ -1037,7 +1038,7 @@ export function LibraryView() {
             )}
           </div>
         ) : viewMode === 'grid' ? (
-          <div className="grid w-full gap-4 justify-center" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 210px))' }} data-testid="grid-view">
+          <div className="grid w-full gap-4 justify-center" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 320px))' }} data-testid="grid-view">
             {filteredFamilies.map((family) => (
               <GridFamilyCard
                 key={family.familyName}
@@ -1630,35 +1631,94 @@ function FamilyCard({
 /* ------------------------------------------------------------------ */
 
 function pickPreviewFont(fonts: StoredFontMeta[]): StoredFontMeta {
+  const variables = fonts.filter((f) => f.isVariable && f.variableAxes?.length);
+  if (variables.length > 0) {
+    const best = variables.reduce((a, b) => (b.variableAxes!.length > a.variableAxes!.length ? b : a));
+    return best;
+  }
   const regular = fonts.find((f) => f.weight >= 380 && f.weight <= 420 && f.style === 'normal');
   return regular ?? fonts.find((f) => f.style === 'normal') ?? fonts[0];
 }
 
-function SvgPreview({ glyphSvgs, ascender, descender }: {
-  glyphSvgs: Record<string, GlyphSvg>;
-  ascender: number;
-  descender: number;
-}) {
-  const glyphA = glyphSvgs['A'];
-  const glypha = glyphSvgs['a'];
-  if (!glyphA || !glypha) return null;
+const CAT_LABELS: Record<string, string> = {
+  'serif': 'Serif',
+  'sans-serif': 'Sans',
+  'monospace': 'Mono',
+  'display': 'Display',
+  'script': 'Script',
+};
 
-  const totalWidth = glyphA.advWidth + glypha.advWidth;
-  const height = ascender - descender;
-  if (totalWidth <= 0 || height <= 0) return null;
+const CAT_COLORS: Record<string, string> = {
+  'serif': 'bg-rose-500/15 text-rose-400 border-rose-500/30',
+  'sans-serif': 'bg-sky-500/15 text-sky-400 border-sky-500/30',
+  'monospace': 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+  'display': 'bg-purple-500/15 text-purple-400 border-purple-500/30',
+  'script': 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+};
+
+function AxisInfoPopup({ tag, name, onClose }: { tag: string; name?: string; onClose: () => void }) {
+  const info = getAxisInfo(tag, name);
+  const popRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (popRef.current && !popRef.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose]);
+  return (
+    <div ref={popRef} className="absolute bottom-full left-1/2 z-40 mb-2 w-56 -translate-x-1/2 rounded-lg border border-neutral-700 bg-neutral-900 p-3 shadow-xl">
+      <h4 className="mb-1 text-xs font-semibold text-neutral-200">{info.name} <span className="font-mono text-neutral-500">({tag})</span></h4>
+      <p className="text-[11px] leading-relaxed text-neutral-400">{info.description}</p>
+    </div>
+  );
+}
+
+function VerticalAxisSlider({ axis, value, onChange, side }: {
+  axis: VariableAxis;
+  value: number;
+  onChange: (v: number) => void;
+  side: 'left' | 'right';
+}) {
+  const [showInfo, setShowInfo] = useState(false);
+  const info = getAxisInfo(axis.tag, axis.name);
+  const step = axis.maxValue - axis.minValue > 10 ? 1 : 0.01;
+  const decimals = axis.maxValue - axis.minValue > 10 ? 0 : 2;
 
   return (
-    <svg
-      viewBox={`0 ${-ascender} ${totalWidth} ${height}`}
-      className="h-full w-auto max-w-full"
-      fill="currentColor"
-      data-testid="grid-card-preview"
+    <div
+      className={`relative flex flex-col items-center gap-1 ${side === 'left' ? 'pr-1' : 'pl-1'}`}
+      onClick={(e) => e.stopPropagation()}
     >
-      <path d={glyphA.d} />
-      <g transform={`translate(${glyphA.advWidth},0)`}>
-        <path d={glypha.d} />
-      </g>
-    </svg>
+      <div className="relative flex items-center gap-0.5">
+        <span className="text-[9px] font-semibold uppercase tracking-wider text-neutral-500">{info.name}</span>
+        <button
+          onClick={(e) => { e.stopPropagation(); setShowInfo((v) => !v); }}
+          className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-neutral-800 text-[8px] font-bold text-neutral-500 hover:bg-neutral-700 hover:text-neutral-300"
+          title={`About ${info.name}`}
+        >
+          i
+        </button>
+        {showInfo && <AxisInfoPopup tag={axis.tag} name={axis.name} onClose={() => setShowInfo(false)} />}
+      </div>
+      <span className="text-[9px] tabular-nums text-neutral-600">{axis.maxValue}</span>
+      <input
+        type="range"
+        min={axis.minValue}
+        max={axis.maxValue}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        className="vertical-slider h-24 w-5 accent-teal-500"
+        style={{
+          writingMode: 'vertical-lr',
+          direction: 'rtl',
+          appearance: 'slider-vertical' as any,
+        }}
+      />
+      <span className="text-[9px] tabular-nums text-neutral-600">{axis.minValue}</span>
+      <span className="mt-0.5 rounded bg-neutral-800 px-1 py-px text-[9px] tabular-nums text-teal-400">{value.toFixed(decimals)}</span>
+    </div>
   );
 }
 
@@ -1682,12 +1742,31 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
   const popoverRef = useRef<HTMLDivElement>(null);
   const catPopoverRef = useRef<HTMLDivElement>(null);
 
+  const axes = useMemo(() => previewFont.variableAxes ?? [], [previewFont]);
+  const wghtAxis = useMemo(() => axes.find((a) => a.tag === 'wght'), [axes]);
+  const wdthAxis = useMemo(() => axes.find((a) => a.tag === 'wdth'), [axes]);
+  const italAxis = useMemo(() => axes.find((a) => a.tag === 'ital' || a.tag === 'slnt'), [axes]);
+  const otherAxes = useMemo(() => axes.filter((a) => a.tag !== 'wght' && a.tag !== 'wdth' && a.tag !== 'ital' && a.tag !== 'slnt'), [axes]);
+
+  const [axisValues, setAxisValues] = useState<Record<string, number>>(() =>
+    Object.fromEntries(axes.map((a) => [a.tag, a.defaultValue]))
+  );
+
+  const updateAxis = useCallback((tag: string, val: number) => {
+    setAxisValues((prev) => ({ ...prev, [tag]: val }));
+  }, []);
+
+  const fontVariationSettings = useMemo(() => {
+    if (axes.length === 0) return undefined;
+    return Object.entries(axisValues)
+      .map(([tag, val]) => `'${tag}' ${val}`)
+      .join(', ');
+  }, [axes, axisValues]);
+
   useEffect(() => {
     if (!showVariants) return;
     const onClickOutside = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        setShowVariants(false);
-      }
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) setShowVariants(false);
     };
     document.addEventListener('mousedown', onClickOutside);
     return () => document.removeEventListener('mousedown', onClickOutside);
@@ -1696,9 +1775,7 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
   useEffect(() => {
     if (!showCatPopover) return;
     const handler = (e: MouseEvent) => {
-      if (catPopoverRef.current && !catPopoverRef.current.contains(e.target as Node)) {
-        setShowCatPopover(false);
-      }
+      if (catPopoverRef.current && !catPopoverRef.current.contains(e.target as Node)) setShowCatPopover(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -1706,22 +1783,18 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
 
   const anySelected = family.fonts.some((f) => selected.has(f.id));
   const effectiveCategory = previewFont.categoryOverride ?? previewFont.category;
-  const CAT_COLORS: Record<string, string> = {
-    'serif': 'bg-rose-500/15 text-rose-400 border-rose-500/30',
-    'sans-serif': 'bg-sky-500/15 text-sky-400 border-sky-500/30',
-    'monospace': 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-    'display': 'bg-purple-500/15 text-purple-400 border-purple-500/30',
-    'script': 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-  };
+
+  const hasItalicVariant = !italAxis && family.fonts.some((f) => f.style === 'italic');
+  const [showItalicVariant, setShowItalicVariant] = useState(false);
 
   return (
     <div
       ref={ref}
-      className={`group relative flex cursor-pointer flex-col items-center rounded-lg border bg-neutral-900 p-4 transition-colors hover:border-neutral-600 ${bulkSelected ? 'border-orange-500' : 'border-neutral-800'}`}
-      onClick={() => bulkEditMode ? onBulkToggle?.(family.familyName) : onAnalyze(previewFont.id)}
+      className={`group relative flex flex-col rounded-lg border bg-neutral-900 transition-colors hover:border-neutral-600 ${bulkSelected ? 'border-orange-500' : 'border-neutral-800'}`}
       data-testid="grid-card"
     >
-      <div className="absolute left-2 top-2 flex items-center gap-1">
+      {/* Top bar: category, font name, badges */}
+      <div className="flex items-center gap-1.5 border-b border-neutral-800 px-3 py-2">
         {bulkEditMode && (
           <input
             type="checkbox"
@@ -1733,41 +1806,77 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
         )}
         <button
           onClick={(e) => { e.stopPropagation(); onToggleStar(family); }}
-          className="text-base leading-none transition-colors"
+          className="text-sm leading-none transition-colors"
           title={family.starred ? 'Unstar family' : 'Star family'}
         >
           {family.starred
             ? <span className="text-amber-400">&#9733;</span>
             : <span className="text-neutral-700 opacity-0 transition-opacity hover:text-amber-400/60 group-hover:opacity-100">&#9734;</span>}
         </button>
-      </div>
-      <div className="absolute right-2 top-2 flex items-center gap-1">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            if (family.fonts.length === 1) {
-              onToggleSelect(previewFont.id);
-            } else {
-              setShowVariants((v) => !v);
-            }
-          }}
-          className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold transition-all ${
-            anySelected
-              ? 'bg-blue-500 text-white'
-              : 'bg-neutral-700/50 text-neutral-500 opacity-0 hover:bg-blue-500/30 hover:text-blue-300 group-hover:opacity-100'
-          }`}
-          title="Add to compare"
+        {effectiveCategory && (
+          <div className="relative">
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowCatPopover((v) => !v); }}
+              className={`rounded-full border px-1.5 py-px text-[9px] font-bold uppercase leading-tight ${CAT_COLORS[effectiveCategory] ?? 'bg-neutral-700/50 text-neutral-500 border-neutral-700'}`}
+              title={`Category: ${effectiveCategory}`}
+            >
+              {CAT_LABELS[effectiveCategory] ?? effectiveCategory}
+            </button>
+            {showCatPopover && (
+              <div
+                ref={catPopoverRef}
+                className="absolute left-0 top-full z-30 mt-1 w-36 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="border-b border-neutral-800 px-3 py-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Set Category</span>
+                </div>
+                {CATEGORIES.map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={(e) => { e.stopPropagation(); onCategoryOverride?.(family, cat.id); setShowCatPopover(false); }}
+                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-neutral-800 ${effectiveCategory === cat.id ? 'text-blue-400' : 'text-neutral-300'}`}
+                  >
+                    {effectiveCategory === cat.id && <span className="text-blue-400">&#10003;</span>}
+                    <span className={effectiveCategory === cat.id ? '' : 'ml-5'}>{cat.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        <span
+          className="min-w-0 flex-1 cursor-pointer truncate text-xs font-medium text-neutral-300"
+          onClick={() => bulkEditMode ? onBulkToggle?.(family.familyName) : onAnalyze(previewFont.id)}
+          title={family.familyName}
         >
-          {anySelected ? selected.size : '+'}
-        </button>
-        <SourceBadge source={family.source} sources={family.sources} />
-        {family.hasVariable && <VariableBadge />}
+          {family.fonts.length} style{family.fonts.length !== 1 ? 's' : ''}
+        </span>
+
+        <div className="flex items-center gap-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (family.fonts.length === 1) onToggleSelect(previewFont.id);
+              else setShowVariants((v) => !v);
+            }}
+            className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold transition-all ${
+              anySelected ? 'bg-blue-500 text-white' : 'bg-neutral-700/50 text-neutral-500 opacity-0 hover:bg-blue-500/30 hover:text-blue-300 group-hover:opacity-100'
+            }`}
+            title="Add to compare"
+          >
+            {anySelected ? selected.size : '+'}
+          </button>
+          <SourceBadge source={family.source} sources={family.sources} />
+          {family.hasVariable && <VariableBadge />}
+        </div>
       </div>
 
       {showVariants && (
         <div
           ref={popoverRef}
-          className="absolute right-1 top-8 z-20 w-48 rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl"
+          className="absolute right-1 top-10 z-20 w-48 rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="border-b border-neutral-800 px-3 py-1.5">
@@ -1775,16 +1884,8 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
           </div>
           <div className="max-h-48 overflow-y-auto py-1">
             {family.fonts.map((f) => (
-              <label
-                key={f.id}
-                className="flex cursor-pointer items-center gap-2 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(f.id)}
-                  onChange={() => onToggleSelect(f.id)}
-                  className="h-3 w-3 rounded border-neutral-600 bg-neutral-800 accent-blue-500"
-                />
+              <label key={f.id} className="flex cursor-pointer items-center gap-2 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-800">
+                <input type="checkbox" checked={selected.has(f.id)} onChange={() => onToggleSelect(f.id)} className="h-3 w-3 rounded border-neutral-600 bg-neutral-800 accent-blue-500" />
                 <span className="truncate">{variantLabel(f)}</span>
                 <span className="ml-auto shrink-0 tabular-nums text-neutral-600">{f.weight}</span>
               </label>
@@ -1793,68 +1894,132 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
         </div>
       )}
 
-      <div className="flex h-24 w-full items-center justify-center text-white">
-        {previewFont.glyphSvgs?.['A'] && previewFont.glyphSvgs?.['a'] ? (
-          <SvgPreview glyphSvgs={previewFont.glyphSvgs} ascender={previewFont.ascender} descender={previewFont.descender} />
-        ) : loading ? (
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-600 border-t-blue-400" />
-        ) : (
-          <span
-            className="text-5xl transition-opacity"
-            style={{
-              fontFamily: fontFamily ? `'${fontFamily}', serif` : 'serif',
-              opacity: fontFamily ? 1 : 0.3,
-            }}
-            data-testid="grid-card-preview"
-          >
-            Aa
-          </span>
+      {/* Main body: optional sliders + preview */}
+      <div
+        className="flex flex-1 cursor-pointer items-stretch px-2 py-3"
+        onClick={() => bulkEditMode ? onBulkToggle?.(family.familyName) : onAnalyze(previewFont.id)}
+      >
+        {/* Left: weight slider */}
+        {wghtAxis && (
+          <VerticalAxisSlider
+            axis={wghtAxis}
+            value={axisValues[wghtAxis.tag] ?? wghtAxis.defaultValue}
+            onChange={(v) => updateAxis(wghtAxis.tag, v)}
+            side="left"
+          />
         )}
-      </div>
-      <h3 className="mt-2 w-full truncate text-center text-sm font-medium text-white">
-        {family.familyName}
-      </h3>
-      <div className="relative mt-0.5 flex items-center gap-1.5">
-        <p className="text-xs text-neutral-500">
-          {family.fonts.length} Style{family.fonts.length !== 1 ? 's' : ''}
-        </p>
-        {effectiveCategory && (
-          <button
-            onClick={(e) => { e.stopPropagation(); setShowCatPopover((v) => !v); }}
-            className={`rounded-full border px-1.5 py-px text-[9px] font-medium leading-tight ${CAT_COLORS[effectiveCategory] ?? 'bg-neutral-700/50 text-neutral-500 border-neutral-700'}`}
-            title={`Category: ${effectiveCategory}${previewFont.categoryOverride ? ' (override)' : ''}`}
-          >
-            {effectiveCategory}
-          </button>
-        )}
-        {showCatPopover && (
-          <div
-            ref={catPopoverRef}
-            className="absolute bottom-full right-0 z-30 mb-1 w-36 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="border-b border-neutral-800 px-3 py-1">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Set Category</span>
-            </div>
-            {CATEGORIES.map((cat) => (
-              <button
-                key={cat.id}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onCategoryOverride?.(family, cat.id);
-                  setShowCatPopover(false);
+
+        {/* Center: Aa preview */}
+        <div className="flex min-w-0 flex-1 flex-col items-center justify-center">
+          <div className="flex h-28 w-full items-center justify-center text-white">
+            {loading ? (
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-600 border-t-blue-400" />
+            ) : (
+              <span
+                className="text-6xl transition-opacity"
+                style={{
+                  fontFamily: fontFamily ? `'${fontFamily}', serif` : 'serif',
+                  opacity: fontFamily ? 1 : 0.3,
+                  fontVariationSettings: fontFamily ? fontVariationSettings : undefined,
+                  fontStyle: showItalicVariant ? 'italic' : undefined,
                 }}
-                className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-neutral-800 ${
-                  effectiveCategory === cat.id ? 'text-blue-400' : 'text-neutral-300'
-                }`}
+                data-testid="grid-card-preview"
               >
-                {effectiveCategory === cat.id && <span className="text-blue-400">&#10003;</span>}
-                <span className={effectiveCategory === cat.id ? '' : 'ml-5'}>{cat.label}</span>
-              </button>
-            ))}
+                Aa
+              </span>
+            )}
           </div>
+          <h3
+            className="mt-1 w-full truncate text-center text-sm font-medium text-white"
+            title={family.familyName}
+          >
+            {family.familyName}
+          </h3>
+        </div>
+
+        {/* Right: width slider */}
+        {wdthAxis && (
+          <VerticalAxisSlider
+            axis={wdthAxis}
+            value={axisValues[wdthAxis.tag] ?? wdthAxis.defaultValue}
+            onChange={(v) => updateAxis(wdthAxis.tag, v)}
+            side="right"
+          />
         )}
       </div>
+
+      {/* Bottom bar: italic/slant toggle + other axes */}
+      {(italAxis || hasItalicVariant || otherAxes.length > 0) && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800 px-3 py-2" onClick={(e) => e.stopPropagation()}>
+          {italAxis && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] font-semibold uppercase text-neutral-500">{italAxis.tag === 'ital' ? 'Style' : 'Slant'}</span>
+              {italAxis.tag === 'ital' ? (
+                <div className="flex rounded border border-neutral-700">
+                  <button
+                    onClick={() => updateAxis('ital', 0)}
+                    className={`px-2 py-0.5 text-[10px] transition-colors ${(axisValues.ital ?? 0) === 0 ? 'bg-neutral-700 text-white' : 'text-neutral-500 hover:text-white'}`}
+                  >
+                    Upright
+                  </button>
+                  <button
+                    onClick={() => updateAxis('ital', 1)}
+                    className={`px-2 py-0.5 text-[10px] transition-colors ${(axisValues.ital ?? 0) === 1 ? 'bg-neutral-700 text-white' : 'text-neutral-500 hover:text-white'}`}
+                  >
+                    Italic
+                  </button>
+                </div>
+              ) : (
+                <input
+                  type="range"
+                  min={italAxis.minValue}
+                  max={italAxis.maxValue}
+                  step={0.5}
+                  value={axisValues[italAxis.tag] ?? italAxis.defaultValue}
+                  onChange={(e) => updateAxis(italAxis.tag, parseFloat(e.target.value))}
+                  className="w-16 accent-teal-500"
+                />
+              )}
+            </div>
+          )}
+          {!italAxis && hasItalicVariant && (
+            <div className="flex rounded border border-neutral-700">
+              <button
+                onClick={() => setShowItalicVariant(false)}
+                className={`px-2 py-0.5 text-[10px] transition-colors ${!showItalicVariant ? 'bg-neutral-700 text-white' : 'text-neutral-500 hover:text-white'}`}
+              >
+                Upright
+              </button>
+              <button
+                onClick={() => setShowItalicVariant(true)}
+                className={`px-2 py-0.5 text-[10px] transition-colors ${showItalicVariant ? 'bg-neutral-700 text-white' : 'text-neutral-500 hover:text-white'}`}
+              >
+                Italic
+              </button>
+            </div>
+          )}
+          {otherAxes.map((axis) => {
+            const info = getAxisInfo(axis.tag, axis.name);
+            return (
+              <div key={axis.tag} className="flex items-center gap-1">
+                <span className="text-[9px] font-semibold uppercase text-neutral-500" title={info.description}>{info.name}</span>
+                <input
+                  type="range"
+                  min={axis.minValue}
+                  max={axis.maxValue}
+                  step={axis.maxValue - axis.minValue > 10 ? 1 : 0.01}
+                  value={axisValues[axis.tag] ?? axis.defaultValue}
+                  onChange={(e) => updateAxis(axis.tag, parseFloat(e.target.value))}
+                  className="w-16 accent-teal-500"
+                />
+                <span className="text-[9px] tabular-nums text-neutral-600">
+                  {(axisValues[axis.tag] ?? axis.defaultValue).toFixed(axis.maxValue - axis.minValue > 10 ? 0 : 2)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

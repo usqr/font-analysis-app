@@ -20,6 +20,7 @@ import { groupByWidth, widthQualifier, weightLabel, superFamilyName, familyKey }
 import { extractOTFFeatures, OTF_FEATURE_NAMES } from '../lib/otfFeatures';
 import type { StoredFontMeta, FontCategory, VariableAxis } from '../types';
 import { useFontFace } from '../lib/useFontFace';
+import { getAxisInfo } from '../lib/axisDescriptions';
 
 const WIDTH_CLASS_NAMES: Record<number, string> = {
   1: 'Ultra-Condensed', 2: 'Extra-Condensed', 3: 'Condensed',
@@ -121,6 +122,37 @@ function extractRawMetadata(font: import('opentype.js').Font): RawMetaSection[] 
   }
 
   return sections;
+}
+
+function AnalyzeAxisInfoButton({ tag, name }: { tag: string; name?: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const info = getAxisInfo(tag, name);
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+  return (
+    <div className="relative inline-flex">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-4 w-4 items-center justify-center rounded-full bg-neutral-800 text-[9px] font-bold text-neutral-500 hover:bg-neutral-700 hover:text-neutral-300"
+        title={`About ${info.name}`}
+      >
+        i
+      </button>
+      {open && (
+        <div ref={ref} className="absolute bottom-full left-1/2 z-40 mb-2 w-60 -translate-x-1/2 rounded-lg border border-neutral-700 bg-neutral-900 p-3 shadow-xl">
+          <h4 className="mb-1 text-xs font-semibold text-neutral-200">{info.name} <span className="font-mono text-neutral-500">({tag})</span></h4>
+          <p className="text-[11px] leading-relaxed text-neutral-400">{info.description}</p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const CATEGORIES: { id: FontCategory; label: string }[] = [
@@ -644,23 +676,27 @@ export function AnalyzeView() {
               </button>
             </div>
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-              {variableAxes.map((axis) => (
-                <div key={axis.tag} className="flex items-center gap-2">
-                  <span className="w-10 text-xs font-medium uppercase text-neutral-400">{axis.tag}</span>
-                  <input
-                    type="range"
-                    min={axis.minValue}
-                    max={axis.maxValue}
-                    step={axis.maxValue - axis.minValue > 10 ? 1 : 0.01}
-                    value={axisValues[axis.tag] ?? axis.defaultValue}
-                    onChange={(e) => setAxisValues((prev) => ({ ...prev, [axis.tag]: parseFloat(e.target.value) }))}
-                    className="w-28 accent-teal-500"
-                  />
-                  <span className="w-12 text-right text-xs tabular-nums text-neutral-500">
-                    {(axisValues[axis.tag] ?? axis.defaultValue).toFixed(axis.maxValue - axis.minValue > 10 ? 0 : 2)}
-                  </span>
-                </div>
-              ))}
+              {variableAxes.map((axis) => {
+                const info = getAxisInfo(axis.tag, axis.name);
+                return (
+                  <div key={axis.tag} className="flex items-center gap-2">
+                    <span className="w-10 text-xs font-medium uppercase text-neutral-400" title={info.description}>{axis.tag}</span>
+                    <AnalyzeAxisInfoButton tag={axis.tag} name={axis.name} />
+                    <input
+                      type="range"
+                      min={axis.minValue}
+                      max={axis.maxValue}
+                      step={axis.maxValue - axis.minValue > 10 ? 1 : 0.01}
+                      value={axisValues[axis.tag] ?? axis.defaultValue}
+                      onChange={(e) => setAxisValues((prev) => ({ ...prev, [axis.tag]: parseFloat(e.target.value) }))}
+                      className="w-28 accent-teal-500"
+                    />
+                    <span className="w-12 text-right text-xs tabular-nums text-neutral-500">
+                      {(axisValues[axis.tag] ?? axis.defaultValue).toFixed(axis.maxValue - axis.minValue > 10 ? 0 : 2)}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
             {previewFontFamily && (
               <div
@@ -811,14 +847,20 @@ export function AnalyzeView() {
                 Variable Axes
               </h3>
               <dl className="space-y-2">
-                {variableAxes.map((axis) => (
-                  <div key={axis.tag}>
-                    <dt className="text-xs text-neutral-400">{axis.name ?? axis.tag}</dt>
-                    <dd className="text-sm text-neutral-300">
-                      {axis.minValue} – {axis.maxValue} (default: {axis.defaultValue})
-                    </dd>
-                  </div>
-                ))}
+                {variableAxes.map((axis) => {
+                  const info = getAxisInfo(axis.tag, axis.name);
+                  return (
+                    <div key={axis.tag}>
+                      <dt className="flex items-center gap-1 text-xs text-neutral-400">
+                        {info.name} <span className="font-mono text-neutral-600">({axis.tag})</span>
+                        <AnalyzeAxisInfoButton tag={axis.tag} name={axis.name} />
+                      </dt>
+                      <dd className="text-sm text-neutral-300">
+                        {axis.minValue} – {axis.maxValue} (default: {axis.defaultValue})
+                      </dd>
+                    </div>
+                  );
+                })}
               </dl>
             </div>
           )}

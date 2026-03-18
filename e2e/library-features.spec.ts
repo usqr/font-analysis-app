@@ -215,10 +215,10 @@ test.describe('Library features', () => {
     const nameText = await familyName.textContent();
     expect(nameText?.length).toBeGreaterThan(0);
 
-    const styleCount = firstCard.locator('p');
-    await expect(styleCount).toBeVisible();
-    const styleText = await styleCount.textContent();
-    expect(styleText).toMatch(/\d+\s+Styles?/);
+    const styleCount = firstCard.locator('h3, span').filter({ hasText: /\d+\s+styles?/i });
+    await expect(styleCount.first()).toBeVisible();
+    const styleText = await styleCount.first().textContent();
+    expect(styleText).toMatch(/\d+\s+styles?/i);
 
     const listBtn = page.locator('[data-testid="view-list"]');
     await listBtn.click();
