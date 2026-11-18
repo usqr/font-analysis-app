@@ -46,11 +46,16 @@ export function useFontFace(fontId: string | null): {
   const [loading, setLoading] = useState(false);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const elRef = useRef<HTMLElement | null>(null);
-  const loadedRef = useRef(false);
+  // Tracks which fontId has been loaded (or started loading) so that a
+  // changed fontId re-triggers loading — enables swapping font files
+  // (e.g. stepped weight selection) after the initial lazy load.
+  const loadedForRef = useRef<string | null>(null);
+  // Tracks the previous fontId so a post-mount change can trigger an eager load.
+  const prevIdRef = useRef<string | null>(fontId);
 
   const startLoad = useCallback(() => {
-    if (!fontId || loadedRef.current) return;
-    loadedRef.current = true;
+    if (!fontId || loadedForRef.current === fontId) return;
+    loadedForRef.current = fontId;
     if (fontCache.has(fontId)) {
       setFontFamily(cssFamilyName(fontId));
       return;
@@ -86,6 +91,16 @@ export function useFontFace(fontId: string | null): {
     },
     [fontId, startLoad],
   );
+
+  // When fontId changes after the element has mounted (e.g. a static weight /
+  // slant / width swap selects a different font file), load it eagerly — the
+  // card is on-screen during interaction. The initial load stays lazy via the
+  // IntersectionObserver set up in `ref`.
+  useEffect(() => {
+    if (prevIdRef.current === fontId) return;
+    prevIdRef.current = fontId;
+    if (elRef.current) startLoad();
+  }, [fontId, startLoad]);
 
   useEffect(() => {
     return () => {

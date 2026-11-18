@@ -119,6 +119,30 @@ export function groupByWidth(fonts: StoredFontMeta[]): Map<string, WidthStyleGro
   return map;
 }
 
+export function uniqueSortedWeights(fonts: StoredFontMeta[]): number[] {
+  return Array.from(new Set(fonts.map((f) => f.weight))).sort((a, b) => a - b);
+}
+
+export function fontForWeightStyleWidth(
+  fonts: StoredFontMeta[],
+  weight: number,
+  widthKey: string | null,
+  italic: boolean,
+): StoredFontMeta | undefined {
+  const groups = groupByWidth(fonts);
+  const group = (widthKey ? groups.get(widthKey) : undefined) ?? groups.values().next().value;
+  if (!group) return undefined;
+  const pool = italic
+    ? (group.italic.length > 0 ? group.italic : group.normal)
+    : (group.normal.length > 0 ? group.normal : group.italic);
+  if (pool.length === 0) return undefined;
+  let closest = pool[0];
+  for (const f of pool) {
+    if (Math.abs(f.weight - weight) < Math.abs(closest.weight - weight)) closest = f;
+  }
+  return closest;
+}
+
 export function familyKey(familyName: string): string {
   return familyName;
 }

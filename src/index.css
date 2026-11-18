@@ -1,1 +1,31 @@
 @import "tailwindcss";
+
+/* Lato — UI font for library grid tiles (per Figma design) */
+@font-face {
+  font-family: 'Lato UI';
+  src: url('/fonts/Lato-Light.ttf') format('truetype');
+  font-weight: 300;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Lato UI';
+  src: url('/fonts/Lato-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Lato UI';
+  src: url('/fonts/Lato-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Lato UI';
+  src: url('/fonts/Lato-Black.ttf') format('truetype');
+  font-weight: 900;
+  font-display: swap;
+}
+
+@theme {
+  --font-ui: 'Lato UI', ui-sans-serif, system-ui, sans-serif;
+}

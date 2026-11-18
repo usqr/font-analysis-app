@@ -215,10 +215,10 @@ test.describe('Library features', () => {
     const nameText = await familyName.textContent();
     expect(nameText?.length).toBeGreaterThan(0);
 
-    const styleCount = firstCard.locator('h3, span').filter({ hasText: /\d+\s+styles?/i });
+    const styleCount = firstCard.locator('h3, span').filter({ hasText: /\d+\s+(styles?|ax[ie]s)/i });
     await expect(styleCount.first()).toBeVisible();
     const styleText = await styleCount.first().textContent();
-    expect(styleText).toMatch(/\d+\s+styles?/i);
+    expect(styleText).toMatch(/\d+\s+(styles?|ax[ie]s)/i);
 
     const listBtn = page.locator('[data-testid="view-list"]');
     await listBtn.click();
@@ -401,8 +401,8 @@ test.describe('Library features', () => {
     }
 
     const firstCard = gridCards.first();
-    const badge = firstCard.locator('span[title="Local font"], span[title="Google Fonts"], span[title="Local + Google Fonts"]');
-    await expect(badge).toBeVisible();
+    const badge = firstCard.locator('[title="Local font"], [title="Google Fonts"], [title="Local + Google Fonts"]');
+    await expect(badge.first()).toBeVisible();
 
     await page.screenshot({ path: 'e2e/test-results/grid-source-badges.png' });
   });

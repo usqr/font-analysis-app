@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import type { ReactNode, MouseEvent as ReactMouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { StoredFontMeta, FontFamily, FontCategory, FontSource, VariableAxis } from '../types';
+import type { StoredFontMeta, FontFamily, FontCategory, FontSource } from '../types';
 import type { ScanEvent, ScanProgressUpdate } from '../lib/api';
 import { fetchDatabase, scanFolderStream, pickFolder, deleteFont, refreshFont, updateFontPath, clearDatabase, deduplicateDatabase, computeMetrics, toggleStarFamily, fetchFontPaths, addFontPath, removeFontPath, bulkSetCategory, bulkSetTags, fetchAllTags } from '../lib/api';
-import { groupByFamily, variantLabel, groupByWidth, familyKey, type WidthStyleGroup } from '../lib/fontFamilies';
+import { groupByFamily, variantLabel, groupByWidth, familyKey, uniqueSortedWeights, fontForWeightStyleWidth, type WidthStyleGroup } from '../lib/fontFamilies';
 import { useFontFace } from '../lib/useFontFace';
 import { HistogramFilter } from './HistogramFilter';
 import { getAxisInfo } from '../lib/axisDescriptions';
@@ -1019,7 +1020,7 @@ export function LibraryView() {
       )}
 
       {/* Font list / grid */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto bg-[#242424] p-4">
         {filteredFamilies.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 text-neutral-500">
             {allFonts.length === 0 ? (
@@ -1038,7 +1039,7 @@ export function LibraryView() {
             )}
           </div>
         ) : viewMode === 'grid' ? (
-          <div className="grid w-full gap-4 justify-center" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 320px))' }} data-testid="grid-view">
+          <div className="grid w-full gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 230px), 1fr))' }} data-testid="grid-view">
             {filteredFamilies.map((family) => (
               <GridFamilyCard
                 key={family.familyName}
@@ -1640,84 +1641,209 @@ function pickPreviewFont(fonts: StoredFontMeta[]): StoredFontMeta {
   return regular ?? fonts.find((f) => f.style === 'normal') ?? fonts[0];
 }
 
+// Lowercase category labels per Figma design.
 const CAT_LABELS: Record<string, string> = {
-  'serif': 'Serif',
-  'sans-serif': 'Sans',
-  'monospace': 'Mono',
-  'display': 'Display',
-  'script': 'Script',
+  'serif': 'serif',
+  'sans-serif': 'sans',
+  'monospace': 'mono',
+  'display': 'display',
+  'script': 'script',
 };
 
-const CAT_COLORS: Record<string, string> = {
-  'serif': 'bg-rose-500/15 text-rose-400 border-rose-500/30',
-  'sans-serif': 'bg-sky-500/15 text-sky-400 border-sky-500/30',
-  'monospace': 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-  'display': 'bg-purple-500/15 text-purple-400 border-purple-500/30',
-  'script': 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+// Neon foreground on a darkened (≈ fg × 0.5 over black) background, per design.
+const CAT_TOKENS: Record<string, { fg: string; bg: string }> = {
+  'sans-serif': { fg: '#00ff6a', bg: '#008035' },
+  'serif': { fg: '#ff3b3b', bg: '#801e1e' },
+  'monospace': { fg: '#00ffd1', bg: '#00806a' },
+  'display': { fg: '#c46bff', bg: '#623580' },
+  'script': { fg: '#ffb000', bg: '#805800' },
 };
 
-function AxisInfoPopup({ tag, name, onClose }: { tag: string; name?: string; onClose: () => void }) {
-  const info = getAxisInfo(tag, name);
-  const popRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (popRef.current && !popRef.current.contains(e.target as Node)) onClose();
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [onClose]);
+/* ---- Tile leaf components (Figma "bg" frame 1681:269) ---------------- */
+
+// A coloured segment in the contiguous top row.
+function TopSegment({ children, fg, bg, roundedBl, title, onClick, className = '' }: {
+  children: ReactNode;
+  fg: string;
+  bg: string;
+  roundedBl?: boolean;
+  title?: string;
+  onClick?: (e: ReactMouseEvent) => void;
+  className?: string;
+}) {
   return (
-    <div ref={popRef} className="absolute bottom-full left-1/2 z-40 mb-2 w-56 -translate-x-1/2 rounded-lg border border-neutral-700 bg-neutral-900 p-3 shadow-xl">
-      <h4 className="mb-1 text-xs font-semibold text-neutral-200">{info.name} <span className="font-mono text-neutral-500">({tag})</span></h4>
-      <p className="text-[11px] leading-relaxed text-neutral-400">{info.description}</p>
+    <div
+      title={title}
+      onClick={onClick}
+      className={`font-ui flex h-full items-center justify-center overflow-hidden px-[2.5cqw] leading-none ${roundedBl ? 'rounded-bl-[5cqw]' : ''} ${onClick ? 'cursor-pointer' : ''} ${className}`}
+      style={{ color: fg, background: bg, fontWeight: 300, fontSize: 'clamp(9px,3.4cqw,13px)' }}
+    >
+      {children}
     </div>
   );
 }
 
-function VerticalAxisSlider({ axis, value, onChange, side }: {
-  axis: VariableAxis;
+// Source marker segment (rightmost top-row tag).
+function SourceTag({ source, sources }: { source?: string; sources?: string[] }) {
+  const hasBoth = sources && sources.includes('local') && sources.includes('google');
+  const overlap = 'relative z-20 ml-[-5cqw] shrink-0';
+  if (hasBoth) return <TopSegment fg="#c084fc" bg="#3b2a5c" roundedBl title="Local + Google Fonts" className={overlap}>l+g</TopSegment>;
+  if (source === 'google') return <TopSegment fg="#0095ff" bg="#194a6e" roundedBl title="Google Fonts" className={overlap}>g</TopSegment>;
+  return <TopSegment fg="#ff9500" bg="#5c3a10" roundedBl title="Local font" className={overlap}>l</TopSegment>;
+}
+
+// Vertical weight scale. Stepped (static, snaps to available files) or fluid (variable axis, step 50).
+function WeightRuler({ mode, weights, axisMin, axisMax, value, onChange }: {
+  mode: 'stepped' | 'fluid';
+  weights?: number[];
+  axisMin?: number;
+  axisMax?: number;
   value: number;
   onChange: (v: number) => void;
-  side: 'left' | 'right';
 }) {
-  const [showInfo, setShowInfo] = useState(false);
-  const info = getAxisInfo(axis.tag, axis.name);
-  const step = axis.maxValue - axis.minValue > 10 ? 1 : 0.01;
-  const decimals = axis.maxValue - axis.minValue > 10 ? 0 : 2;
+  const stepped = mode === 'stepped';
+  const rmin = stepped ? (weights![0] ?? 0) : (axisMin ?? 0);
+  const rmax = stepped ? (weights![weights!.length - 1] ?? rmin) : (axisMax ?? rmin);
+  const span = (rmax - rmin) || 1;
+  const interactive = rmax !== rmin;
+  // Lighter at top → heavier at bottom. Ticks are inset by PAD% from the
+  // top/bottom edges so the topmost label clears the top bar; a single
+  // available weight (no range) sits centered rather than pinned to the top.
+  const PAD = 14;
+  const place = (v: number) => (interactive ? PAD + ((v - rmin) / span) * (100 - 2 * PAD) : 50);
+
+  const ticks = stepped
+    ? weights!.map((w) => ({ v: w, label: String(w), major: w === value, visible: w === value || w === rmin || w === rmax }))
+    : [
+        { v: rmin, label: String(Math.round(rmin)), major: false, visible: true },
+        { v: rmax, label: String(Math.round(rmax)), major: false, visible: true },
+        { v: value, label: String(Math.round(value)), major: true, visible: true },
+      ];
 
   return (
-    <div
-      className={`relative flex flex-col items-center gap-1 ${side === 'left' ? 'pr-1' : 'pl-1'}`}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="relative flex items-center gap-0.5">
-        <span className="text-[9px] font-semibold uppercase tracking-wider text-neutral-500">{info.name}</span>
-        <button
-          onClick={(e) => { e.stopPropagation(); setShowInfo((v) => !v); }}
-          className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-neutral-800 text-[8px] font-bold text-neutral-500 hover:bg-neutral-700 hover:text-neutral-300"
-          title={`About ${info.name}`}
-        >
-          i
-        </button>
-        {showInfo && <AxisInfoPopup tag={axis.tag} name={axis.name} onClose={() => setShowInfo(false)} />}
+    <div className="relative flex shrink-0 select-none" style={{ width: 'clamp(30px,13cqw,42px)' }} onClick={(e) => e.stopPropagation()}>
+      <div className="relative flex-1">
+        {ticks.map((t, i) => (
+          <div
+            key={`${t.v}-${i}`}
+            className="absolute left-0 flex items-center gap-[1.5cqw]"
+            style={{ top: `${place(t.v)}%`, transform: 'translateY(-50%)', opacity: t.visible ? 1 : 0, pointerEvents: t.visible ? 'auto' : 'none' }}
+          >
+            <button
+              type="button"
+              onClick={() => onChange(t.v)}
+              aria-label={`Weight ${t.label}`}
+              style={{ height: t.major ? 2 : 1, width: 'clamp(8px,3.5cqw,16px)', background: t.major ? '#fff' : '#808080' }}
+            />
+            <span
+              className="font-ui tabular-nums leading-none"
+              style={{ fontSize: t.major ? 'clamp(10px,3.6cqw,13px)' : 'clamp(9px,3cqw,11px)', color: t.major ? '#fff' : '#808080', fontWeight: t.major ? 500 : 400 }}
+            >
+              {t.label}
+            </span>
+          </div>
+        ))}
+        {interactive && (
+          stepped ? (
+            <input
+              type="range" aria-label="Weight"
+              min={0} max={weights!.length - 1} step={1}
+              value={Math.max(0, weights!.indexOf(value))}
+              onChange={(e) => onChange(weights![parseInt(e.target.value, 10)])}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              style={{ writingMode: 'vertical-lr', direction: 'rtl' }}
+            />
+          ) : (
+            <input
+              type="range" aria-label="Weight" aria-valuetext={String(Math.round(value))}
+              min={rmin} max={rmax} step={50}
+              value={value}
+              onChange={(e) => onChange(parseFloat(e.target.value))}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              style={{ writingMode: 'vertical-lr', direction: 'rtl' }}
+            />
+          )
+        )}
       </div>
-      <span className="text-[9px] tabular-nums text-neutral-600">{axis.maxValue}</span>
-      <input
-        type="range"
-        min={axis.minValue}
-        max={axis.maxValue}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-        className="vertical-slider h-24 w-5 accent-teal-500"
-        style={{
-          writingMode: 'vertical-lr',
-          direction: 'rtl',
-          appearance: 'slider-vertical' as any,
-        }}
-      />
-      <span className="text-[9px] tabular-nums text-neutral-600">{axis.minValue}</span>
-      <span className="mt-0.5 rounded bg-neutral-800 px-1 py-px text-[9px] tabular-nums text-teal-400">{value.toFixed(decimals)}</span>
+    </div>
+  );
+}
+
+// Bottom regular/italic (or oblique) picker.
+function SlantPicker({ italic, italicLabel, onChange }: { italic: boolean; italicLabel: string; onChange: (b: boolean) => void }) {
+  const Opt = ({ active, text, on }: { active: boolean; text: string; on: () => void }) => (
+    <button type="button" onClick={on} className="flex flex-col items-center gap-[1.5cqw]">
+      <span className="font-ui leading-none" style={{ color: active ? '#fff' : '#808080', fontSize: active ? 'clamp(11px,4cqw,14px)' : 'clamp(10px,3.4cqw,12px)', fontWeight: 500 }}>{text}</span>
+      <span style={{ height: 2, width: 'clamp(14px,6cqw,22px)', background: active ? '#fff' : 'rgba(255,255,255,0.3)' }} />
+    </button>
+  );
+  return (
+    <div className="flex items-end justify-center gap-[10cqw]" onClick={(e) => e.stopPropagation()}>
+      <Opt active={!italic} text="regular" on={() => onChange(false)} />
+      <Opt active={italic} text={italicLabel} on={() => onChange(true)} />
+    </div>
+  );
+}
+
+// Right-edge control: a rotated current-value label with a tick, plus a dropdown
+// to switch which axis/width is being controlled. `continuous` drives a hidden
+// vertical slider for variable axes; absent for static width selection.
+function EdgeAxisControl({ items, activeTag, onSelectItem, currentLabel, continuous }: {
+  items: { tag: string; name: string }[];
+  activeTag: string;
+  onSelectItem: (tag: string) => void;
+  currentLabel: string;
+  continuous?: { min: number; max: number; step: number; value: number; onChange: (v: number) => void };
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative flex shrink-0 flex-col items-center justify-center" style={{ width: 'clamp(28px,12cqw,40px)' }} onClick={(e) => e.stopPropagation()}>
+      {continuous && (
+        <div className="relative flex w-full flex-1 items-center justify-center">
+          <div className="absolute inset-y-[6cqw] w-px bg-neutral-600" />
+          <input
+            type="range" aria-label={activeTag}
+            min={continuous.min} max={continuous.max} step={continuous.step}
+            value={continuous.value}
+            onChange={(e) => continuous.onChange(parseFloat(e.target.value))}
+            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+            style={{ writingMode: 'vertical-lr', direction: 'rtl' }}
+          />
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={() => items.length > 1 && setOpen((o) => !o)}
+        className="flex items-center justify-center"
+        style={{ minHeight: 'clamp(36px,16cqw,60px)' }}
+        title={items.length > 1 ? 'Switch axis' : currentLabel}
+      >
+        <span className="font-ui whitespace-nowrap leading-none text-white" style={{ transform: 'rotate(-35deg)', fontSize: 'clamp(10px,3.6cqw,13px)', fontWeight: 500 }}>
+          {currentLabel}
+        </span>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-1 z-30 w-32 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-xl">
+          {items.map((it) => (
+            <button
+              key={it.tag}
+              type="button"
+              onClick={() => { onSelectItem(it.tag); setOpen(false); }}
+              className={`block w-full px-3 py-1 text-left text-[11px] transition-colors hover:bg-neutral-800 ${it.tag === activeTag ? 'text-blue-400' : 'text-neutral-300'}`}
+            >
+              {it.name}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1736,7 +1862,6 @@ interface GridFamilyCardProps {
 
 function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSelect, onCategoryOverride, bulkEditMode, bulkSelected, onBulkToggle }: GridFamilyCardProps) {
   const previewFont = useMemo(() => pickPreviewFont(family.fonts), [family.fonts]);
-  const { fontFamily, loading, ref } = useFontFace(previewFont.id);
   const [showVariants, setShowVariants] = useState(false);
   const [showCatPopover, setShowCatPopover] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -1744,24 +1869,56 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
 
   const axes = useMemo(() => previewFont.variableAxes ?? [], [previewFont]);
   const wghtAxis = useMemo(() => axes.find((a) => a.tag === 'wght'), [axes]);
-  const wdthAxis = useMemo(() => axes.find((a) => a.tag === 'wdth'), [axes]);
   const italAxis = useMemo(() => axes.find((a) => a.tag === 'ital' || a.tag === 'slnt'), [axes]);
-  const otherAxes = useMemo(() => axes.filter((a) => a.tag !== 'wght' && a.tag !== 'wdth' && a.tag !== 'ital' && a.tag !== 'slnt'), [axes]);
+  const rightAxes = useMemo(() => axes.filter((a) => a.tag !== 'wght' && a.tag !== 'ital' && a.tag !== 'slnt'), [axes]);
+  const isVariable = previewFont.isVariable === true && axes.length > 0;
+
+  // Width groups (static families with multiple widths).
+  const widthGroups = useMemo(() => groupByWidth(family.fonts), [family.fonts]);
+  const widthKeys = useMemo(() => Array.from(widthGroups.keys()), [widthGroups]);
+  const [widthKey, setWidthKey] = useState(() => widthKeys[0] ?? 'Default');
+  useEffect(() => {
+    if (!widthKeys.includes(widthKey)) setWidthKey(widthKeys[0] ?? 'Default');
+  }, [widthKeys, widthKey]);
+
+  const [italic, setItalic] = useState(false);
+  const [staticWeight, setStaticWeight] = useState(() => previewFont.weight);
 
   const [axisValues, setAxisValues] = useState<Record<string, number>>(() =>
     Object.fromEntries(axes.map((a) => [a.tag, a.defaultValue]))
   );
-
   const updateAxis = useCallback((tag: string, val: number) => {
     setAxisValues((prev) => ({ ...prev, [tag]: val }));
   }, []);
 
+  // Selectable variable axis on the right edge (wdth preferred).
+  const [activeRightTag, setActiveRightTag] = useState<string>(() => rightAxes[0]?.tag ?? '');
+  useEffect(() => {
+    if (rightAxes.length && !rightAxes.some((a) => a.tag === activeRightTag)) setActiveRightTag(rightAxes[0].tag);
+  }, [rightAxes, activeRightTag]);
+
+  // Static-font weight pool for the current width + slant.
+  const group = widthGroups.get(widthKey) ?? { normal: [], italic: [] };
+  const pool = italic
+    ? (group.italic.length ? group.italic : group.normal)
+    : (group.normal.length ? group.normal : group.italic);
+  const availableWeights = useMemo(() => uniqueSortedWeights(pool), [pool]);
+  const effWeight = availableWeights.includes(staticWeight)
+    ? staticWeight
+    : (availableWeights.reduce((a, b) => (Math.abs(b - staticWeight) < Math.abs(a - staticWeight) ? b : a), availableWeights[0] ?? staticWeight));
+
+  // Resolve the actual font file to render/analyze.
+  const currentFont = isVariable
+    ? previewFont
+    : (fontForWeightStyleWidth(family.fonts, effWeight, widthKey === 'Default' ? null : widthKey, italic) ?? previewFont);
+  const { fontFamily, loading, ref } = useFontFace(currentFont.id);
+
   const fontVariationSettings = useMemo(() => {
-    if (axes.length === 0) return undefined;
-    return Object.entries(axisValues)
-      .map(([tag, val]) => `'${tag}' ${val}`)
-      .join(', ');
-  }, [axes, axisValues]);
+    if (!isVariable) return undefined;
+    const entries: Record<string, number> = { ...axisValues };
+    if (italAxis) entries[italAxis.tag] = italAxis.tag === 'ital' ? (italic ? 1 : 0) : (italic ? italAxis.maxValue : 0);
+    return Object.entries(entries).map(([tag, val]) => `'${tag}' ${val}`).join(', ');
+  }, [isVariable, axisValues, italAxis, italic]);
 
   useEffect(() => {
     if (!showVariants) return;
@@ -1783,45 +1940,68 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
 
   const anySelected = family.fonts.some((f) => selected.has(f.id));
   const effectiveCategory = previewFont.categoryOverride ?? previewFont.category;
+  const catToken = effectiveCategory ? CAT_TOKENS[effectiveCategory] : undefined;
 
-  const hasItalicVariant = !italAxis && family.fonts.some((f) => f.style === 'italic');
-  const [showItalicVariant, setShowItalicVariant] = useState(false);
+  const canItalic = isVariable ? !!italAxis : family.fonts.some((f) => f.style !== 'normal');
+  const italicLabel = (isVariable && italAxis?.tag === 'slnt') || family.fonts.some((f) => f.style === 'oblique') ? 'oblique' : 'italic';
+
+  const showWeightRuler = isVariable ? !!wghtAxis : availableWeights.length > 0;
+  const showRight = isVariable ? rightAxes.length > 0 : widthKeys.length > 1;
+  const activeAxis = rightAxes.find((a) => a.tag === activeRightTag);
+
+  const countLabel = isVariable
+    ? `${axes.length} ${axes.length === 1 ? 'axis' : 'axes'}`
+    : `${family.fonts.length} style${family.fonts.length !== 1 ? 's' : ''}`;
+
+  const analyze = () => bulkEditMode ? onBulkToggle?.(family.familyName) : onAnalyze(currentFont.id);
+
+  // True when the user is previewing a non-default variant (weight / slant /
+  // width / variable axis differs from the family's default preview font).
+  const variantModified = isVariable
+    ? italic || axes.some((a) => (axisValues[a.tag] ?? a.defaultValue) !== a.defaultValue)
+    : effWeight !== previewFont.weight || italic || widthKey !== (widthKeys[0] ?? 'Default');
 
   return (
     <div
       ref={ref}
-      className={`group relative flex flex-col rounded-lg border bg-neutral-900 transition-colors hover:border-neutral-600 ${bulkSelected ? 'border-orange-500' : 'border-neutral-800'}`}
+      className={`@container group relative flex flex-col overflow-hidden rounded-b-[12px] bg-[#080808] transition-shadow ${bulkSelected ? 'ring-2 ring-orange-500' : 'ring-1 ring-neutral-800/60 hover:ring-neutral-600'}`}
       data-testid="grid-card"
     >
-      {/* Top bar: category, font name, badges */}
-      <div className="flex items-center gap-1.5 border-b border-neutral-800 px-3 py-2">
-        {bulkEditMode && (
-          <input
-            type="checkbox"
-            checked={bulkSelected ?? false}
-            onChange={(e) => { e.stopPropagation(); onBulkToggle?.(family.familyName); }}
-            onClick={(e) => e.stopPropagation()}
-            className="h-3.5 w-3.5 shrink-0 rounded border-neutral-600 bg-neutral-800 accent-orange-500"
-          />
+      {/* Top row: fav · category · count · vf · source */}
+      <div className="flex w-full items-stretch" style={{ height: 'clamp(24px,9cqw,34px)' }}>
+        {bulkEditMode ? (
+          <label className="relative z-10 flex h-full shrink-0 items-center justify-center rounded-br-[5cqw] bg-[#515151] px-[2.5cqw]" onClick={(e) => e.stopPropagation()}>
+            <input
+              type="checkbox"
+              checked={bulkSelected ?? false}
+              onChange={() => onBulkToggle?.(family.familyName)}
+              className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-800 accent-orange-500"
+            />
+          </label>
+        ) : (
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleStar(family); }}
+            className="relative z-10 flex h-full shrink-0 items-center justify-center rounded-br-[5cqw] bg-[#515151] px-[2.5cqw] leading-none"
+            style={{ fontSize: 'clamp(11px,4cqw,15px)' }}
+            title={family.starred ? 'Unstar family' : 'Star family'}
+          >
+            {family.starred
+              ? <span className="text-white">&#9733;</span>
+              : <span className="transition-colors hover:text-white" style={{ color: '#797979', textShadow: '0 -1px 1px rgba(0,0,0,0.7), 0 1px 1px rgba(255,255,255,0.12)' }}>&#9733;</span>}
+          </button>
         )}
-        <button
-          onClick={(e) => { e.stopPropagation(); onToggleStar(family); }}
-          className="text-sm leading-none transition-colors"
-          title={family.starred ? 'Unstar family' : 'Star family'}
-        >
-          {family.starred
-            ? <span className="text-amber-400">&#9733;</span>
-            : <span className="text-neutral-700 opacity-0 transition-opacity hover:text-amber-400/60 group-hover:opacity-100">&#9734;</span>}
-        </button>
-        {effectiveCategory && (
-          <div className="relative">
-            <button
-              onClick={(e) => { e.stopPropagation(); setShowCatPopover((v) => !v); }}
-              className={`rounded-full border px-1.5 py-px text-[9px] font-bold uppercase leading-tight ${CAT_COLORS[effectiveCategory] ?? 'bg-neutral-700/50 text-neutral-500 border-neutral-700'}`}
+
+        {effectiveCategory && catToken && (
+          <div className="relative ml-[-5cqw] flex min-w-0 flex-1">
+            <TopSegment
+              fg={catToken.fg}
+              bg={catToken.bg}
               title={`Category: ${effectiveCategory}`}
+              onClick={(e) => { e.stopPropagation(); setShowCatPopover((v) => !v); }}
+              className="w-full"
             >
-              {CAT_LABELS[effectiveCategory] ?? effectiveCategory}
-            </button>
+              <span className="truncate">{CAT_LABELS[effectiveCategory] ?? effectiveCategory}</span>
+            </TopSegment>
             {showCatPopover && (
               <div
                 ref={catPopoverRef}
@@ -1846,31 +2026,14 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
           </div>
         )}
 
-        <span
-          className="min-w-0 flex-1 cursor-pointer truncate text-xs font-medium text-neutral-300"
-          onClick={() => bulkEditMode ? onBulkToggle?.(family.familyName) : onAnalyze(previewFont.id)}
-          title={family.familyName}
-        >
-          {family.fonts.length} style{family.fonts.length !== 1 ? 's' : ''}
-        </span>
+        <TopSegment fg="#ffffff" bg="#666666" title="Number of styles (or axes for variable fonts)" className="min-w-0 flex-1">
+          <span className="truncate tabular-nums" style={{ fontFeatureSettings: '"onum" 1, "tnum" 1' }}>{countLabel}</span>
+        </TopSegment>
 
-        <div className="flex items-center gap-1">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              if (family.fonts.length === 1) onToggleSelect(previewFont.id);
-              else setShowVariants((v) => !v);
-            }}
-            className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold transition-all ${
-              anySelected ? 'bg-blue-500 text-white' : 'bg-neutral-700/50 text-neutral-500 opacity-0 hover:bg-blue-500/30 hover:text-blue-300 group-hover:opacity-100'
-            }`}
-            title="Add to compare"
-          >
-            {anySelected ? selected.size : '+'}
-          </button>
-          <SourceBadge source={family.source} sources={family.sources} />
-          {family.hasVariable && <VariableBadge />}
-        </div>
+        {family.hasVariable && (
+          <TopSegment fg="#00fff2" bg="#008f88" roundedBl title="Variable font" className="relative z-10 ml-[-5cqw] shrink-0">vf</TopSegment>
+        )}
+        <SourceTag source={family.source} sources={family.sources} />
       </div>
 
       {showVariants && (
@@ -1894,34 +2057,49 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
         </div>
       )}
 
-      {/* Main body: optional sliders + preview */}
+      {/* Body: weight ruler · specimen · right axis */}
       <div
-        className="flex flex-1 cursor-pointer items-stretch px-2 py-3"
-        onClick={() => bulkEditMode ? onBulkToggle?.(family.familyName) : onAnalyze(previewFont.id)}
+        className="relative flex flex-1 cursor-pointer items-stretch px-[2cqw] pb-[2cqw] pt-[1cqw]"
+        style={{ minHeight: 'clamp(150px,56cqw,212px)' }}
+        onClick={analyze}
       >
-        {/* Left: weight slider */}
-        {wghtAxis && (
-          <VerticalAxisSlider
-            axis={wghtAxis}
-            value={axisValues[wghtAxis.tag] ?? wghtAxis.defaultValue}
-            onChange={(v) => updateAxis(wghtAxis.tag, v)}
-            side="left"
-          />
+        {/* Add-to-compare "+" — centered below the top row */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (family.fonts.length === 1) onToggleSelect(currentFont.id);
+            else setShowVariants((v) => !v);
+          }}
+          className={`absolute top-[1cqw] z-10 font-ui leading-none transition-all ${variantModified ? 'left-[18cqw]' : 'left-1/2 -translate-x-1/2'}`}
+          style={{ fontSize: 'clamp(16px,8cqw,28px)', fontWeight: anySelected ? 600 : 900, color: anySelected ? '#ffffff' : '#666666' }}
+          title="Add to compare"
+        >
+          {anySelected ? selected.size : '+'}
+        </button>
+
+        {/* Side controls are absolute overlays so the specimen stays centered */}
+        {showWeightRuler && (
+          <div className="absolute inset-y-[2cqw] left-[2cqw] z-10 flex">
+            {isVariable
+              ? <WeightRuler mode="fluid" axisMin={wghtAxis!.minValue} axisMax={wghtAxis!.maxValue} value={axisValues[wghtAxis!.tag] ?? wghtAxis!.defaultValue} onChange={(v) => updateAxis(wghtAxis!.tag, v)} />
+              : <WeightRuler mode="stepped" weights={availableWeights} value={effWeight} onChange={(w) => setStaticWeight(w)} />}
+          </div>
         )}
 
-        {/* Center: Aa preview */}
+        {/* Center specimen */}
         <div className="flex min-w-0 flex-1 flex-col items-center justify-center">
-          <div className="flex h-28 w-full items-center justify-center text-white">
+          <div className="flex w-full items-center justify-center text-white" style={{ height: 'clamp(70px,30cqw,120px)' }}>
             {loading ? (
-              <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-600 border-t-blue-400" />
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-700 border-t-white" />
             ) : (
               <span
-                className="text-6xl transition-opacity"
+                className="transition-opacity"
                 style={{
                   fontFamily: fontFamily ? `'${fontFamily}', serif` : 'serif',
+                  fontSize: 'clamp(40px,20cqw,72px)',
+                  lineHeight: 1,
                   opacity: fontFamily ? 1 : 0.3,
                   fontVariationSettings: fontFamily ? fontVariationSettings : undefined,
-                  fontStyle: showItalicVariant ? 'italic' : undefined,
                 }}
                 data-testid="grid-card-preview"
               >
@@ -1930,94 +2108,46 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
             )}
           </div>
           <h3
-            className="mt-1 w-full truncate text-center text-sm font-medium text-white"
+            className="font-ui mt-[2cqw] w-full truncate text-center text-white"
+            style={{ fontSize: 'clamp(13px,6cqw,20px)', fontWeight: 500 }}
             title={family.familyName}
           >
             {family.familyName}
           </h3>
         </div>
 
-        {/* Right: width slider */}
-        {wdthAxis && (
-          <VerticalAxisSlider
-            axis={wdthAxis}
-            value={axisValues[wdthAxis.tag] ?? wdthAxis.defaultValue}
-            onChange={(v) => updateAxis(wdthAxis.tag, v)}
-            side="right"
-          />
+        {showRight && (
+          <div className="absolute inset-y-[2cqw] right-[2cqw] z-10 flex">
+          {isVariable && activeAxis
+            ? <EdgeAxisControl
+                items={rightAxes.map((a) => ({ tag: a.tag, name: getAxisInfo(a.tag, a.name).name }))}
+                activeTag={activeRightTag}
+                onSelectItem={setActiveRightTag}
+                currentLabel={String(Math.round(axisValues[activeAxis.tag] ?? activeAxis.defaultValue))}
+                continuous={{
+                  min: activeAxis.minValue,
+                  max: activeAxis.maxValue,
+                  step: activeAxis.maxValue - activeAxis.minValue > 10 ? 1 : 0.1,
+                  value: axisValues[activeAxis.tag] ?? activeAxis.defaultValue,
+                  onChange: (v) => updateAxis(activeAxis.tag, v),
+                }}
+              />
+            : !isVariable
+              ? <EdgeAxisControl
+                  items={widthKeys.map((w) => ({ tag: w, name: w }))}
+                  activeTag={widthKey}
+                  onSelectItem={setWidthKey}
+                  currentLabel={widthKey === 'Default' ? 'normal' : widthKey}
+                />
+              : null}
+          </div>
         )}
       </div>
 
-      {/* Bottom bar: italic/slant toggle + other axes */}
-      {(italAxis || hasItalicVariant || otherAxes.length > 0) && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800 px-3 py-2" onClick={(e) => e.stopPropagation()}>
-          {italAxis && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-[9px] font-semibold uppercase text-neutral-500">{italAxis.tag === 'ital' ? 'Style' : 'Slant'}</span>
-              {italAxis.tag === 'ital' ? (
-                <div className="flex rounded border border-neutral-700">
-                  <button
-                    onClick={() => updateAxis('ital', 0)}
-                    className={`px-2 py-0.5 text-[10px] transition-colors ${(axisValues.ital ?? 0) === 0 ? 'bg-neutral-700 text-white' : 'text-neutral-500 hover:text-white'}`}
-                  >
-                    Upright
-                  </button>
-                  <button
-                    onClick={() => updateAxis('ital', 1)}
-                    className={`px-2 py-0.5 text-[10px] transition-colors ${(axisValues.ital ?? 0) === 1 ? 'bg-neutral-700 text-white' : 'text-neutral-500 hover:text-white'}`}
-                  >
-                    Italic
-                  </button>
-                </div>
-              ) : (
-                <input
-                  type="range"
-                  min={italAxis.minValue}
-                  max={italAxis.maxValue}
-                  step={0.5}
-                  value={axisValues[italAxis.tag] ?? italAxis.defaultValue}
-                  onChange={(e) => updateAxis(italAxis.tag, parseFloat(e.target.value))}
-                  className="w-16 accent-teal-500"
-                />
-              )}
-            </div>
-          )}
-          {!italAxis && hasItalicVariant && (
-            <div className="flex rounded border border-neutral-700">
-              <button
-                onClick={() => setShowItalicVariant(false)}
-                className={`px-2 py-0.5 text-[10px] transition-colors ${!showItalicVariant ? 'bg-neutral-700 text-white' : 'text-neutral-500 hover:text-white'}`}
-              >
-                Upright
-              </button>
-              <button
-                onClick={() => setShowItalicVariant(true)}
-                className={`px-2 py-0.5 text-[10px] transition-colors ${showItalicVariant ? 'bg-neutral-700 text-white' : 'text-neutral-500 hover:text-white'}`}
-              >
-                Italic
-              </button>
-            </div>
-          )}
-          {otherAxes.map((axis) => {
-            const info = getAxisInfo(axis.tag, axis.name);
-            return (
-              <div key={axis.tag} className="flex items-center gap-1">
-                <span className="text-[9px] font-semibold uppercase text-neutral-500" title={info.description}>{info.name}</span>
-                <input
-                  type="range"
-                  min={axis.minValue}
-                  max={axis.maxValue}
-                  step={axis.maxValue - axis.minValue > 10 ? 1 : 0.01}
-                  value={axisValues[axis.tag] ?? axis.defaultValue}
-                  onChange={(e) => updateAxis(axis.tag, parseFloat(e.target.value))}
-                  className="w-16 accent-teal-500"
-                />
-                <span className="text-[9px] tabular-nums text-neutral-600">
-                  {(axisValues[axis.tag] ?? axis.defaultValue).toFixed(axis.maxValue - axis.minValue > 10 ? 0 : 2)}
-                </span>
-              </div>
-            );
-          })}
+      {/* Bottom: regular / italic picker */}
+      {canItalic && (
+        <div className="pb-[3cqw] pt-[1cqw]">
+          <SlantPicker italic={italic} italicLabel={italicLabel} onChange={setItalic} />
         </div>
       )}
     </div>
