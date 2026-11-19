@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import type { ReactNode, MouseEvent as ReactMouseEvent } from 'react';
+import type { CSSProperties, ReactNode, MouseEvent as ReactMouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { StoredFontMeta, FontFamily, FontCategory, FontSource } from '../types';
 import type { ScanEvent, ScanProgressUpdate } from '../lib/api';
@@ -1821,6 +1821,10 @@ function SourceTag({ source, sources }: { source?: string; sources?: string[] })
 }
 
 // Vertical weight scale. Stepped (static, snaps to available files) or fluid (variable axis, step 50).
+// The ruler shows the lightest weight at the top, so the range minimum must be
+// at the top too: vertical writing mode, left-to-right (top-to-bottom) direction.
+const RULER_INPUT_STYLE: CSSProperties = { writingMode: 'vertical-lr', direction: 'ltr' };
+
 function WeightRuler({ mode, weights, axisMin, axisMax, value, onChange }: {
   mode: 'stepped' | 'fluid';
   weights?: number[];
@@ -1882,7 +1886,7 @@ function WeightRuler({ mode, weights, axisMin, axisMax, value, onChange }: {
               value={Math.max(0, weights!.indexOf(value))}
               onChange={(e) => onChange(weights![parseInt(e.target.value, 10)])}
               className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-              style={{ writingMode: 'vertical-lr', direction: 'rtl' }}
+              style={RULER_INPUT_STYLE}
             />
           ) : (
             <input
@@ -1891,7 +1895,7 @@ function WeightRuler({ mode, weights, axisMin, axisMax, value, onChange }: {
               value={value}
               onChange={(e) => onChange(parseFloat(e.target.value))}
               className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-              style={{ writingMode: 'vertical-lr', direction: 'rtl' }}
+              style={RULER_INPUT_STYLE}
             />
           )
         )}
@@ -2126,7 +2130,7 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
   return (
     <div
       ref={ref}
-      className={`@container group relative flex flex-col overflow-hidden rounded-b-[12px] bg-[#080808] transition-shadow ${bulkSelected ? 'ring-2 ring-orange-500' : 'ring-1 ring-neutral-800/60 hover:ring-neutral-600'}`}
+      className={`@container group relative flex flex-col rounded-b-[12px] bg-[#080808] transition-shadow hover:z-30 focus-within:z-30 ${showCatPopover || showVariants ? 'z-30' : ''} ${bulkSelected ? 'ring-2 ring-orange-500' : 'ring-1 ring-neutral-800/60 hover:ring-neutral-600'}`}
       data-testid="grid-card"
     >
       {/* Top row: fav · category · count · vf · source */}
@@ -2274,7 +2278,7 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
 
         {/* Center specimen */}
         <div className="flex min-w-0 flex-1 flex-col items-center justify-center">
-          <div className="flex w-full items-center justify-center text-white" style={{ height: 'clamp(70px,30cqw,120px)' }}>
+          <div className="flex w-full items-center justify-center overflow-x-clip text-white" style={{ height: 'clamp(70px,30cqw,120px)' }}>
             {loading ? (
               <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-700 border-t-white" />
             ) : (
