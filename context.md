@@ -252,6 +252,14 @@ Database: `{ version: 1, fonts: StoredFont[] }` in `fonts-db.json`, atomic write
 7. **Variable font reanalysis strategy** -- Analysis runs at default axis values only (opentype.js limitation). Live CSS preview handles visual exploration of the full design space. Future multi-point analysis at different axis positions would require HarfBuzz WASM or similar. Documented in Known Patterns.
 8. **E2E test fix** -- Updated grid view test: style count selector changed from `firstCard.locator('p')` to `firstCard.locator('h3, span').filter({ hasText: /\d+\s+styles?/i })` to match new card structure where style count is a `<span>` in the top bar. All 17 library-features tests pass; 2 pre-existing failures in other test files (wrong port).
 
+### Plan 19: Extended Tags, Variable Switch, Tooltips & Tile Fixes (2026-11-19)
+- Extended tags from glyph-outline analysis (`src/lib/extendedTags.ts`): serif/sans correction and slab detection. Radio "file meta / extended" (default extended). Slab filter.
+- All / Variable / Static switch in the primary filter row.
+- CSS-only tooltips with ARIA descriptions (`Tip.tsx`) on the tile tags, axes and the compare "+".
+- Fixes: vf badge overlap, "+" moved on italic, double weight label, Analyze tab remembers the last font.
+- Static build precomputes `extendedTags` before it strips `glyphSvgs`.
+- Open: scope of more extended-tag accuracy (see AGENTS.md).
+
 ## Key Modified Files
 
 | File | What changed |
