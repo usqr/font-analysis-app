@@ -9,6 +9,8 @@ import { useFontFace } from '../lib/useFontFace';
 import { HistogramFilter } from './HistogramFilter';
 import { getAxisInfo } from '../lib/axisDescriptions';
 import { IS_STATIC } from '../lib/env';
+import { resolveCategory, type ResolvedCategory } from '../lib/extendedTags';
+import { Tip } from './Tip';
 
 const CATEGORIES: { id: FontCategory; label: string }[] = [
   { id: 'serif', label: 'Serif' },
@@ -19,6 +21,35 @@ const CATEGORIES: { id: FontCategory; label: string }[] = [
 ];
 
 type ViewMode = 'list' | 'grid';
+type CategoryFilter = FontCategory | 'slab';
+type VariableFilter = 'all' | 'variable' | 'static';
+type TagMode = 'metadata' | 'extended';
+
+const TAG_MODE_KEY = 'fa:tagMode';
+
+function readTagMode(): TagMode {
+  try {
+    return localStorage.getItem(TAG_MODE_KEY) === 'metadata' ? 'metadata' : 'extended';
+  } catch {
+    return 'extended';
+  }
+}
+
+function writeTagMode(mode: TagMode) {
+  try {
+    localStorage.setItem(TAG_MODE_KEY, mode);
+  } catch {
+    // Storage can be blocked (private mode). The choice then lasts for this page only.
+  }
+}
+
+const EXTENDED_TAGS_INFO = 'Extended tags come from an analysis of the glyph outlines, not only from the metadata in the font file. They correct serif fonts that the file labels as sans, and they add the "slab" tag. Your own category edits always win.';
+
+const VARIABLE_FILTERS: { id: VariableFilter; label: string; info: string }[] = [
+  { id: 'all', label: 'All', info: 'Show all font families.' },
+  { id: 'variable', label: 'Variable', info: 'Show only families with a variable font (one file with continuous axes).' },
+  { id: 'static', label: 'Static', info: 'Show only families without a variable font (one file for each style).' },
+];
 type CardState = 'collapsed' | 'normal' | 'expanded';
 
 export function LibraryView() {
@@ -50,7 +81,7 @@ export function LibraryView() {
   const [dedupMsg, setDedupMsg] = useState<string | null>(null);
   const dedupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<FontCategory | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<CategoryFilter | null>(null);
   const [contrastRange, setContrastRange] = useState<[number, number]>([0, 1]);
   const [weightRange, setWeightRange] = useState<[number, number]>([0, 1]);
   const [widthRange, setWidthRange] = useState<[number, number]>([0, 2]);
@@ -69,7 +100,13 @@ export function LibraryView() {
   const [maxStyles, setMaxStyles] = useState(999);
   const [excludeBasicLatinOnly, setExcludeBasicLatinOnly] = useState(false);
   const [requiredScripts, setRequiredScripts] = useState<Set<string>>(new Set());
-  const [showVariableOnly, setShowVariableOnly] = useState(false);
+  const [variableFilter, setVariableFilter] = useState<VariableFilter>('all');
+  const [tagMode, setTagModeState] = useState<TagMode>(readTagMode);
+  const setTagMode = useCallback((mode: TagMode) => {
+    setTagModeState(mode);
+    writeTagMode(mode);
+    if (mode === 'metadata') setSelectedCategory((c) => (c === 'slab' ? null : c));
+  }, []);
 
   const loadDatabase = useCallback(async () => {
     try {
@@ -345,14 +382,14 @@ export function LibraryView() {
   }, [scanLog]);
 
   const familyMetrics = useMemo(() => {
-    const map = new Map<string, { metrics: StoredFontMeta['metrics']; category: StoredFontMeta['category'] }>();
+    const map = new Map<string, { metrics: StoredFontMeta['metrics']; resolved: ResolvedCategory }>();
     for (const fam of families) {
       const regular = fam.fonts.find((f) => f.weight >= 380 && f.weight <= 420 && f.style === 'normal')
         ?? fam.fonts.find((f) => f.style === 'normal') ?? fam.fonts[0];
-      map.set(fam.familyName, { metrics: regular?.metrics, category: regular?.categoryOverride ?? regular?.category });
+      map.set(fam.familyName, { metrics: regular?.metrics, resolved: resolveCategory(regular, fam.fonts, tagMode === 'extended') });
     }
     return map;
-  }, [families]);
+  }, [families, tagMode]);
 
   const availableScripts = useMemo(() => {
     const scripts = new Set<string>();
@@ -400,8 +437,8 @@ export function LibraryView() {
     }
     if (selectedCategory) {
       result = result.filter((f) => {
-        const cat = familyMetrics.get(f.familyName)?.category;
-        return cat === selectedCategory;
+        const resolved = familyMetrics.get(f.familyName)?.resolved;
+        return selectedCategory === 'slab' ? resolved?.slab : resolved?.category === selectedCategory;
       });
     }
     return result;
@@ -454,12 +491,12 @@ export function LibraryView() {
       }
     }
 
-    if (showVariableOnly) {
-      result = result.filter((f) => f.hasVariable);
+    if (variableFilter !== 'all') {
+      result = result.filter((f) => !!f.hasVariable === (variableFilter === 'variable'));
     }
 
     return result;
-  }, [searchAndCatFiltered, showAdvancedFilters, contrastRange, weightRange, widthRange, xHeightRange, familyMetrics, minStyles, maxStyles, excludeBasicLatinOnly, requiredScripts, showVariableOnly]);
+  }, [searchAndCatFiltered, showAdvancedFilters, contrastRange, weightRange, widthRange, xHeightRange, familyMetrics, minStyles, maxStyles, excludeBasicLatinOnly, requiredScripts, variableFilter]);
 
   const rangesInitialized = useRef(false);
   useEffect(() => {
@@ -475,7 +512,7 @@ export function LibraryView() {
     setXHeightRange(range(histogramValues.xHeight));
   }, [histogramValues]);
 
-  const toggleCategory = useCallback((cat: FontCategory) => {
+  const toggleCategory = useCallback((cat: CategoryFilter) => {
     setSelectedCategory((prev) => prev === cat ? null : cat);
   }, []);
 
@@ -488,7 +525,7 @@ export function LibraryView() {
     setMaxStyles(999);
     setExcludeBasicLatinOnly(false);
     setRequiredScripts(new Set());
-    setShowVariableOnly(false);
+    setVariableFilter('all');
     if (histogramValues.contrast.length > 0) {
       const sorted = (a: number[]) => { const s = [...a].sort((x, y) => x - y); return [s[0], s[s.length - 1]] as [number, number]; };
       setContrastRange(sorted(histogramValues.contrast));
@@ -642,7 +679,7 @@ export function LibraryView() {
       {/* Category & histogram filters */}
       {allFonts.length > 0 && (
         <div className="border-b border-neutral-800 px-4 py-2.5">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
             <button
               onClick={() => setShowStarredOnly((v) => !v)}
               className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
@@ -668,6 +705,52 @@ export function LibraryView() {
               </button>
             ))}
             {!IS_STATIC && <span className="mx-1 text-neutral-700">|</span>}
+            <div role="radiogroup" aria-label="Font type" className="flex rounded-full border border-neutral-700 p-0.5" data-testid="variable-filter">
+              {VARIABLE_FILTERS.map((opt) => (
+                <Tip key={opt.id} text={opt.info}>
+                  {(tipId) => (
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={variableFilter === opt.id}
+                      aria-describedby={tipId}
+                      onClick={() => setVariableFilter(opt.id)}
+                      className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                        variableFilter === opt.id ? 'bg-teal-500/20 text-teal-300' : 'text-neutral-400 hover:text-neutral-200'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  )}
+                </Tip>
+              ))}
+            </div>
+            <span className="mx-1 text-neutral-700">|</span>
+            <div role="radiogroup" aria-label="Tags" className="flex items-center gap-2" data-testid="tag-mode">
+              <span className="text-xs text-neutral-500">Tags:</span>
+              {([['metadata', 'file meta'], ['extended', 'extended']] as const).map(([mode, label]) => (
+                <label key={mode} className="flex cursor-pointer items-center gap-1">
+                  <input
+                    type="radio"
+                    name="tag-mode"
+                    value={mode}
+                    checked={tagMode === mode}
+                    onChange={() => setTagMode(mode)}
+                    aria-describedby={mode === 'extended' ? 'extended-tags-info' : undefined}
+                    className="accent-blue-500"
+                  />
+                  <span className="text-xs text-neutral-400">{label}</span>
+                </label>
+              ))}
+            </div>
+            <Tip text={<span id="extended-tags-info">{EXTENDED_TAGS_INFO}</span>} align="start">
+              {(tipId) => (
+                <button type="button" aria-label="About extended tags" aria-describedby={tipId} className="-ml-1 flex h-4 w-4 items-center justify-center rounded-full border border-neutral-600 text-[10px] leading-none text-neutral-400 hover:text-neutral-200">
+                  i
+                </button>
+              )}
+            </Tip>
+            <span className="mx-1 text-neutral-700">|</span>
             {CATEGORIES.map((cat) => (
               <button
                 key={cat.id}
@@ -681,7 +764,20 @@ export function LibraryView() {
                 {cat.label}
               </button>
             ))}
-            {(selectedCategory !== null || selectedSource !== null || search.trim() || showStarredOnly || excludeBasicLatinOnly || requiredScripts.size > 0 || minStyles > 1 || maxStyles < 999 || showVariableOnly) && (
+            {tagMode === 'extended' && (
+              <button
+                onClick={() => toggleCategory('slab')}
+                title="Slab serifs, found by the outline analysis"
+                className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                  selectedCategory === 'slab'
+                    ? 'border-blue-500 bg-blue-500/10 text-blue-400'
+                    : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-300'
+                }`}
+              >
+                Slab
+              </button>
+            )}
+            {(selectedCategory !== null || selectedSource !== null || search.trim() || showStarredOnly || excludeBasicLatinOnly || requiredScripts.size > 0 || minStyles > 1 || maxStyles < 999 || variableFilter !== 'all') && (
               <button
                 onClick={resetAllFilters}
                 className="ml-1 text-xs text-neutral-500 hover:text-neutral-300"
@@ -784,16 +880,6 @@ export function LibraryView() {
                   className="rounded border-neutral-600 bg-neutral-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-0"
                 />
                 <span className="text-xs text-neutral-400">Exclude basic-Latin-only</span>
-              </label>
-
-              <label className="flex cursor-pointer items-center gap-1.5">
-                <input
-                  type="checkbox"
-                  checked={showVariableOnly}
-                  onChange={(e) => setShowVariableOnly(e.target.checked)}
-                  className="rounded border-neutral-600 bg-neutral-800 text-teal-500 focus:ring-teal-500 focus:ring-offset-0"
-                />
-                <span className="text-xs text-neutral-400">Variable only</span>
               </label>
 
               {availableScripts.length > 0 && (
@@ -1055,6 +1141,7 @@ export function LibraryView() {
                 bulkEditMode={bulkEditMode}
                 bulkSelected={bulkSelected.has(family.familyName)}
                 onBulkToggle={toggleBulkSelect}
+                resolved={familyMetrics.get(family.familyName)?.resolved}
               />
             ))}
           </div>
@@ -1077,6 +1164,7 @@ export function LibraryView() {
                 bulkEditMode={bulkEditMode}
                 bulkSelected={bulkSelected.has(family.familyName)}
                 onBulkToggle={toggleBulkSelect}
+                resolved={familyMetrics.get(family.familyName)?.resolved}
               />
             ))}
           </div>
@@ -1350,6 +1438,7 @@ interface FamilyCardProps {
   bulkEditMode?: boolean;
   bulkSelected?: boolean;
   onBulkToggle?: (familyName: string) => void;
+  resolved?: ResolvedCategory;
 }
 
 function FamilyCard({
@@ -1367,6 +1456,7 @@ function FamilyCard({
   bulkEditMode,
   bulkSelected,
   onBulkToggle,
+  resolved,
 }: FamilyCardProps) {
   const [cardState, setCardState] = useState<CardState>('normal');
   const [activeWidth, setActiveWidth] = useState<string>('');
@@ -1405,7 +1495,7 @@ function FamilyCard({
   const hasNormals = currentGroup.normal.length > 0;
   const displayedFonts = showItalic && hasItalics ? currentGroup.italic : currentGroup.normal;
 
-  const effectiveCategory = family.fonts[0]?.categoryOverride ?? family.fonts[0]?.category;
+  const effectiveCategory = resolved?.category ?? family.fonts[0]?.categoryOverride ?? family.fonts[0]?.category;
   const CAT_COLORS: Record<string, string> = {
     'serif': 'bg-rose-500/15 text-rose-400 border-rose-500/30',
     'sans-serif': 'bg-sky-500/15 text-sky-400 border-sky-500/30',
@@ -1450,9 +1540,9 @@ function FamilyCard({
             <button
               onClick={(e) => { e.stopPropagation(); setShowCatPopover((v) => !v); }}
               className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${CAT_COLORS[effectiveCategory] ?? 'bg-neutral-700/50 text-neutral-500 border-neutral-700'}`}
-              title={`Category: ${effectiveCategory}${family.fonts[0]?.categoryOverride ? ' (override)' : ''}`}
+              title={categoryTitle(effectiveCategory, resolved)}
             >
-              {effectiveCategory}
+              {resolved?.slab ? 'slab serif' : effectiveCategory}
             </button>
           )}
           {showCatPopover && (
@@ -1646,6 +1736,21 @@ function pickPreviewFont(fonts: StoredFontMeta[]): StoredFontMeta {
   return regular ?? fonts.find((f) => f.style === 'normal') ?? fonts[0];
 }
 
+function categoryTitle(category: FontCategory, resolved?: ResolvedCategory): string {
+  const name = resolved?.slab ? 'slab serif' : category;
+  if (resolved?.origin === 'override') return `Category: ${name} (your edit)`;
+  if (resolved?.origin === 'analysis') return `Category: ${name} (extended tag, from the outline analysis)`;
+  return `Category: ${name} (from the file metadata)`;
+}
+
+const SOURCE_INFO = {
+  both: 'Local + Google Fonts: this family is in a scanned local folder and in the Google Fonts library.',
+  google: 'Google Fonts: this family comes from the Google Fonts library (github.com/google/fonts).',
+  local: 'Local font: this family comes from a folder that you scanned on this computer.',
+};
+
+const VF_INFO = 'Variable font: one file holds a continuous range of styles along its axes. Use the weight scale on the left and the axis control on the right to move along the axes.';
+
 // Lowercase category labels per Figma design.
 const CAT_LABELS: Record<string, string> = {
   'serif': 'serif',
@@ -1667,21 +1772,30 @@ const CAT_TOKENS: Record<string, { fg: string; bg: string }> = {
 /* ---- Tile leaf components (Figma "bg" frame 1681:269) ---------------- */
 
 // A coloured segment in the contiguous top row.
-function TopSegment({ children, fg, bg, roundedBl, title, onClick, className = '' }: {
+// `overlappedEnd`: the next segment overlaps this one by 5cqw (its notch), so
+// the end padding grows by the same amount to keep the label visible.
+function TopSegment({ children, fg, bg, roundedBl, overlappedEnd, title, onClick, describedBy, label, className = '' }: {
   children: ReactNode;
   fg: string;
   bg: string;
   roundedBl?: boolean;
+  overlappedEnd?: boolean;
   title?: string;
   onClick?: (e: ReactMouseEvent) => void;
+  describedBy?: string;
+  label?: string;
   className?: string;
 }) {
   return (
     <div
       title={title}
       onClick={onClick}
-      className={`font-ui flex h-full items-center justify-center overflow-hidden px-[2.5cqw] leading-none ${roundedBl ? 'rounded-bl-[5cqw]' : ''} ${onClick ? 'cursor-pointer' : ''} ${className}`}
-      style={{ color: fg, background: bg, fontWeight: 300, fontSize: 'clamp(9px,3.4cqw,13px)' }}
+      tabIndex={describedBy ? 0 : undefined}
+      role={describedBy && !onClick ? 'note' : undefined}
+      aria-label={label}
+      aria-describedby={describedBy}
+      className={`font-ui flex h-full items-center justify-center overflow-hidden pl-[2.5cqw] leading-none outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white ${roundedBl ? 'rounded-bl-[5cqw]' : ''} ${onClick ? 'cursor-pointer' : ''} ${className}`}
+      style={{ color: fg, background: bg, fontWeight: 300, fontSize: 'clamp(9px,3.4cqw,13px)', paddingRight: overlappedEnd ? '7.5cqw' : '2.5cqw' }}
     >
       {children}
     </div>
@@ -1691,10 +1805,19 @@ function TopSegment({ children, fg, bg, roundedBl, title, onClick, className = '
 // Source marker segment (rightmost top-row tag).
 function SourceTag({ source, sources }: { source?: string; sources?: string[] }) {
   const hasBoth = sources && sources.includes('local') && sources.includes('google');
-  const overlap = 'relative z-20 ml-[-5cqw] shrink-0';
-  if (hasBoth) return <TopSegment fg="#c084fc" bg="#3b2a5c" roundedBl title="Local + Google Fonts" className={overlap}>l+g</TopSegment>;
-  if (source === 'google') return <TopSegment fg="#0095ff" bg="#194a6e" roundedBl title="Google Fonts" className={overlap}>g</TopSegment>;
-  return <TopSegment fg="#ff9500" bg="#5c3a10" roundedBl title="Local font" className={overlap}>l</TopSegment>;
+  const kind = hasBoth ? 'both' : source === 'google' ? 'google' : 'local';
+  const look = {
+    both: { fg: '#c084fc', bg: '#3b2a5c', text: 'l+g', label: 'Local and Google Fonts' },
+    google: { fg: '#0095ff', bg: '#194a6e', text: 'g', label: 'Google Fonts' },
+    local: { fg: '#ff9500', bg: '#5c3a10', text: 'l', label: 'Local font' },
+  }[kind];
+  return (
+    <Tip text={SOURCE_INFO[kind]} align="end" className="relative z-20 ml-[-5cqw] flex shrink-0">
+      {(tipId) => (
+        <TopSegment fg={look.fg} bg={look.bg} roundedBl label={look.label} describedBy={tipId}>{look.text}</TopSegment>
+      )}
+    </Tip>
+  );
 }
 
 // Vertical weight scale. Stepped (static, snaps to available files) or fluid (variable axis, step 50).
@@ -1716,12 +1839,15 @@ function WeightRuler({ mode, weights, axisMin, axisMax, value, onChange }: {
   // available weight (no range) sits centered rather than pinned to the top.
   const PAD = 14;
   const place = (v: number) => (interactive ? PAD + ((v - rmin) / span) * (100 - 2 * PAD) : 50);
+  // Labels closer than 10% of the scale height overlap.
+  const nearValue = (v: number) => Math.abs(place(v) - place(value)) < 10;
 
   const ticks = stepped
     ? weights!.map((w) => ({ v: w, label: String(w), major: w === value, visible: w === value || w === rmin || w === rmax }))
     : [
-        { v: rmin, label: String(Math.round(rmin)), major: false, visible: true },
-        { v: rmax, label: String(Math.round(rmax)), major: false, visible: true },
+        // An end label near the current value would overlap its label: hide it.
+        { v: rmin, label: String(Math.round(rmin)), major: false, visible: !nearValue(rmin) },
+        { v: rmax, label: String(Math.round(rmax)), major: false, visible: !nearValue(rmax) },
         { v: value, label: String(Math.round(value)), major: true, visible: true },
       ];
 
@@ -1829,7 +1955,7 @@ function EdgeAxisControl({ items, activeTag, onSelectItem, currentLabel, continu
         onClick={() => items.length > 1 && setOpen((o) => !o)}
         className="flex items-center justify-center"
         style={{ minHeight: 'clamp(36px,16cqw,60px)' }}
-        title={items.length > 1 ? 'Switch axis' : currentLabel}
+        aria-label={items.length > 1 ? `${currentLabel}, select another axis` : currentLabel}
       >
         <span className="font-ui whitespace-nowrap leading-none text-white" style={{ transform: 'rotate(-35deg)', fontSize: 'clamp(10px,3.6cqw,13px)', fontWeight: 500 }}>
           {currentLabel}
@@ -1863,9 +1989,14 @@ interface GridFamilyCardProps {
   bulkEditMode?: boolean;
   bulkSelected?: boolean;
   onBulkToggle?: (familyName: string) => void;
+  resolved?: ResolvedCategory;
 }
 
-function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSelect, onCategoryOverride, bulkEditMode, bulkSelected, onBulkToggle }: GridFamilyCardProps) {
+function axisRange(a: { minValue: number; maxValue: number }): string {
+  return `${Math.round(a.minValue * 10) / 10}–${Math.round(a.maxValue * 10) / 10}`;
+}
+
+function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSelect, onCategoryOverride, bulkEditMode, bulkSelected, onBulkToggle, resolved }: GridFamilyCardProps) {
   const previewFont = useMemo(() => pickPreviewFont(family.fonts), [family.fonts]);
   const [showVariants, setShowVariants] = useState(false);
   const [showCatPopover, setShowCatPopover] = useState(false);
@@ -1944,7 +2075,7 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
   }, [showCatPopover]);
 
   const anySelected = family.fonts.some((f) => selected.has(f.id));
-  const effectiveCategory = previewFont.categoryOverride ?? previewFont.category;
+  const effectiveCategory = resolved?.category ?? previewFont.categoryOverride ?? previewFont.category;
   const catToken = effectiveCategory ? CAT_TOKENS[effectiveCategory] : undefined;
 
   const canItalic = isVariable ? !!italAxis : family.fonts.some((f) => f.style !== 'normal');
@@ -1954,17 +2085,43 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
   const showRight = isVariable ? rightAxes.length > 0 : widthKeys.length > 1;
   const activeAxis = rightAxes.find((a) => a.tag === activeRightTag);
 
+  const countInfo = isVariable
+    ? (
+      <>
+        <span className="mb-0.5 block font-medium text-white">Variable axes</span>
+        {axes.map((a) => (
+          <span key={a.tag} className="block tabular-nums">{getAxisInfo(a.tag, a.name).name} <span className="text-neutral-500">({a.tag})</span> {axisRange(a)}</span>
+        ))}
+      </>
+    )
+    : `${family.fonts.length} static style${family.fonts.length !== 1 ? 's' : ''}: each style is a separate font file.`;
+
+  const wghtInfo = isVariable && wghtAxis
+    ? `Weight axis (wght), ${axisRange(wghtAxis)}. Drag up for lighter and down for bolder. ${getAxisInfo('wght').description}`
+    : `Weight: the weights that this family has as static files (${availableWeights.join(', ')}). Drag to show another file.`;
+
+  const rightInfo = isVariable && activeAxis
+    ? `${getAxisInfo(activeAxis.tag, activeAxis.name).name} axis (${activeAxis.tag}), ${axisRange(activeAxis)}. Drag up or down to change. ${getAxisInfo(activeAxis.tag, activeAxis.name).description}${rightAxes.length > 1 ? ' Click the value to select another axis.' : ''}`
+    : `Width: this family has ${widthKeys.length} widths as static files. Click the value to select another width.`;
+
+  const compareInfo = anySelected
+    ? `${selected.size} font${selected.size !== 1 ? 's' : ''} selected for comparison. Click to change the selection. Open the Compare tab to see them side by side.`
+    : family.fonts.length === 1
+      ? 'Add to compare: select this font to compare it side by side with other fonts in the Compare tab.'
+      : 'Add to compare: select styles of this family to compare them side by side in the Compare tab.';
+
   const countLabel = isVariable
     ? `${axes.length} ${axes.length === 1 ? 'axis' : 'axes'}`
     : `${family.fonts.length} style${family.fonts.length !== 1 ? 's' : ''}`;
 
   const analyze = () => bulkEditMode ? onBulkToggle?.(family.familyName) : onAnalyze(currentFont.id);
 
-  // True when the user is previewing a non-default variant (weight / slant /
-  // width / variable axis differs from the family's default preview font).
+  // True when the user previews a non-default weight / width / axis value, so
+  // that the weight ruler label can collide with a centered "+". The slant
+  // (regular/italic) does not change the ruler, so it does not move the "+".
   const variantModified = isVariable
-    ? italic || axes.some((a) => (axisValues[a.tag] ?? a.defaultValue) !== a.defaultValue)
-    : effWeight !== previewFont.weight || italic || widthKey !== (widthKeys[0] ?? 'Default');
+    ? axes.some((a) => a.tag !== italAxis?.tag && (axisValues[a.tag] ?? a.defaultValue) !== a.defaultValue)
+    : staticWeight !== previewFont.weight || widthKey !== (widthKeys[0] ?? 'Default');
 
   return (
     <div
@@ -2001,11 +2158,12 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
             <TopSegment
               fg={catToken.fg}
               bg={catToken.bg}
-              title={`Category: ${effectiveCategory}`}
+              title={categoryTitle(effectiveCategory, resolved)}
               onClick={(e) => { e.stopPropagation(); setShowCatPopover((v) => !v); }}
               className="w-full"
             >
-              <span className="truncate">{CAT_LABELS[effectiveCategory] ?? effectiveCategory}</span>
+              <span className="truncate">{resolved?.slab ? 'slab' : (CAT_LABELS[effectiveCategory] ?? effectiveCategory)}</span>
+              {resolved?.origin === 'analysis' && <span aria-hidden className="ml-[1cqw] opacity-70">*</span>}
             </TopSegment>
             {showCatPopover && (
               <div
@@ -2031,12 +2189,20 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
           </div>
         )}
 
-        <TopSegment fg="#ffffff" bg="#666666" title="Number of styles (or axes for variable fonts)" className="min-w-0 flex-1">
-          <span className="truncate tabular-nums" style={{ fontFeatureSettings: '"onum" 1, "tnum" 1' }}>{countLabel}</span>
-        </TopSegment>
+        <Tip text={countInfo} className="flex min-w-0 flex-1">
+          {(tipId) => (
+            <TopSegment fg="#ffffff" bg="#666666" describedBy={tipId} label={countLabel} overlappedEnd={family.hasVariable} className="min-w-0 flex-1">
+              <span className="truncate tabular-nums" style={{ fontFeatureSettings: '"onum" 1, "tnum" 1' }}>{countLabel}</span>
+            </TopSegment>
+          )}
+        </Tip>
 
         {family.hasVariable && (
-          <TopSegment fg="#00fff2" bg="#008f88" roundedBl title="Variable font" className="relative z-10 ml-[-5cqw] shrink-0">vf</TopSegment>
+          <Tip text={VF_INFO} align="end" className="relative z-10 ml-[-5cqw] flex shrink-0">
+            {(tipId) => (
+              <TopSegment fg="#00fff2" bg="#008f88" roundedBl overlappedEnd label="Variable font" describedBy={tipId}>vf</TopSegment>
+            )}
+          </Tip>
         )}
         <SourceTag source={family.source} sources={family.sources} />
       </div>
@@ -2069,26 +2235,41 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
         onClick={analyze}
       >
         {/* Add-to-compare "+" — centered below the top row */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            if (family.fonts.length === 1) onToggleSelect(currentFont.id);
-            else setShowVariants((v) => !v);
-          }}
-          className={`absolute top-[1cqw] z-10 font-ui leading-none transition-all ${variantModified ? 'left-[18cqw]' : 'left-1/2 -translate-x-1/2'}`}
-          style={{ fontSize: 'clamp(16px,8cqw,28px)', fontWeight: anySelected ? 600 : 900, color: anySelected ? '#ffffff' : '#666666' }}
-          title="Add to compare"
+        <Tip
+          text={compareInfo}
+          align={variantModified ? 'start' : 'center'}
+          className={`absolute top-[1cqw] z-20 transition-all ${variantModified ? 'left-[18cqw]' : 'left-1/2 -translate-x-1/2'}`}
         >
-          {anySelected ? selected.size : '+'}
-        </button>
+          {(tipId) => (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (family.fonts.length === 1) onToggleSelect(currentFont.id);
+                else setShowVariants((v) => !v);
+              }}
+              className="font-ui leading-none"
+              style={{ fontSize: 'clamp(16px,8cqw,28px)', fontWeight: anySelected ? 600 : 900, color: anySelected ? '#ffffff' : '#666666' }}
+              aria-label={anySelected ? `Compare selection: ${selected.size} fonts` : `Add ${family.familyName} to compare`}
+              aria-describedby={tipId}
+              aria-haspopup={family.fonts.length > 1 ? 'dialog' : undefined}
+              aria-expanded={family.fonts.length > 1 ? showVariants : undefined}
+              data-testid="compare-plus"
+            >
+              {anySelected ? selected.size : '+'}
+            </button>
+          )}
+        </Tip>
 
         {/* Side controls are absolute overlays so the specimen stays centered */}
         {showWeightRuler && (
-          <div className="absolute inset-y-[2cqw] left-[2cqw] z-10 flex">
+          <Tip text={wghtInfo} side="right" className="absolute inset-y-[2cqw] left-[2cqw] z-10 flex">
+            {(tipId) => (<div className="flex" aria-describedby={tipId} role="group" aria-label="Weight">
             {isVariable
               ? <WeightRuler mode="fluid" axisMin={wghtAxis!.minValue} axisMax={wghtAxis!.maxValue} value={axisValues[wghtAxis!.tag] ?? wghtAxis!.defaultValue} onChange={(v) => updateAxis(wghtAxis!.tag, v)} />
               : <WeightRuler mode="stepped" weights={availableWeights} value={effWeight} onChange={(w) => setStaticWeight(w)} />}
-          </div>
+            </div>)}
+          </Tip>
         )}
 
         {/* Center specimen */}
@@ -2122,7 +2303,8 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
         </div>
 
         {showRight && (
-          <div className="absolute inset-y-[2cqw] right-[2cqw] z-10 flex">
+          <Tip text={rightInfo} side="left" className="absolute inset-y-[2cqw] right-[2cqw] z-10 flex">
+          {(tipId) => (<div className="flex" aria-describedby={tipId} role="group" aria-label={isVariable && activeAxis ? getAxisInfo(activeAxis.tag, activeAxis.name).name : 'Width'}>
           {isVariable && activeAxis
             ? <EdgeAxisControl
                 items={rightAxes.map((a) => ({ tag: a.tag, name: getAxisInfo(a.tag, a.name).name }))}
@@ -2145,7 +2327,8 @@ function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSel
                   currentLabel={widthKey === 'Default' ? 'normal' : widthKey}
                 />
               : null}
-          </div>
+          </div>)}
+          </Tip>
         )}
       </div>
 
