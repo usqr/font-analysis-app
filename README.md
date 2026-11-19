@@ -30,7 +30,7 @@ A desktop-oriented web app for scanning, storing, analyzing, and comparing font 
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 26 (current LTS, see `.nvmrc`)
 - npm
 
 ### Install & Run
