@@ -568,4 +568,43 @@ test.describe('Library features', () => {
       expect(src === 'local' || src === 'google').toBe(true);
     }
   });
+
+  test('weight ruler: the top of the slider is the lightest weight', async ({ page }) => {
+    const card = page.locator('[data-testid="grid-card"]').filter({ has: page.getByLabel('Variable font') }).first();
+    const slider = card.locator('[role="group"][aria-label="Weight"] input[type="range"]');
+    await slider.scrollIntoViewIfNeeded();
+    const box = (await slider.boundingBox())!;
+    const [min, max] = await slider.evaluate((el: HTMLInputElement) => [Number(el.min), Number(el.max)]);
+
+    await page.mouse.click(box.x + box.width / 2, box.y + 1);
+    expect(Number(await slider.inputValue())).toBe(min);
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height - 1);
+    expect(Number(await slider.inputValue())).toBe(max);
+  });
+
+  test('tile tooltips are not cut by the tile and cover the other controls', async ({ page }) => {
+    // Points near the corners of the open tooltip must hit the tooltip, not the
+    // page behind the tile or another control of the tile.
+    const expectTipOnTop = async (anchor: import('@playwright/test').Locator) => {
+      await anchor.scrollIntoViewIfNeeded();
+      await anchor.hover();
+      const id = await anchor.evaluate((el) => (el.closest('[aria-describedby]') ?? el.querySelector('[aria-describedby]'))!.getAttribute('aria-describedby'));
+      const tip = page.locator(`[id="${id}"]`);
+      await expect(tip).toBeVisible();
+      await expect(tip).toHaveCSS('opacity', '1');
+      const covered = await tip.evaluate((el) => {
+        el.style.pointerEvents = 'auto';
+        const r = el.getBoundingClientRect();
+        const pts = [[r.left + 3, r.top + 3], [r.right - 3, r.top + 3], [r.left + 3, r.bottom - 3], [r.right - 3, r.bottom - 3]];
+        return pts.map(([x, y]) => el.contains(document.elementFromPoint(x, y)));
+      });
+      expect(covered).toEqual([true, true, true, true]);
+    };
+
+    const card = page.locator('[data-testid="grid-card"]').filter({ has: page.getByLabel('Variable font') }).first();
+    await expectTipOnTop(card.getByLabel('Variable font'));
+    await expectTipOnTop(card.locator('[role="group"][aria-label="Weight"]'));
+    const right = card.locator('[role="group"]').nth(1);
+    if (await right.count()) await expectTipOnTop(right);
+  });
 });
