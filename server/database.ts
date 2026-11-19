@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { FullAnalysis } from '../src/types/index.js';
+import type { ExtendedTags, FullAnalysis } from '../src/types/index.js';
 
 export type FontCategory = 'serif' | 'sans-serif' | 'monospace' | 'display' | 'script';
 export type FontSource = 'local' | 'google';
@@ -45,6 +45,7 @@ export interface StoredFont {
   scriptSupport?: string[];
   isVariable?: boolean;
   variableAxes?: { tag: string; minValue: number; defaultValue: number; maxValue: number; name?: string }[];
+  extendedTags?: ExtendedTags;
 }
 
 export interface FontDatabase {

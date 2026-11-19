@@ -3,6 +3,7 @@
  * path that exists at the pinned google/fonts commit.
  */
 import type { StoredFont } from './database.js';
+import { extendedTagsFor } from '../src/lib/extendedTags.js';
 
 export interface ResolveResult {
   fonts: StoredFont[];
@@ -49,9 +50,11 @@ export function resolveFontPaths(fonts: StoredFont[], treePaths: Iterable<string
   return { fonts: out, remapped, dropped };
 }
 
-/** Removes data that the browser does not use (glyph SVGs are ~75% of the file). */
+/**
+ * Removes data that the browser does not use (glyph SVGs are ~75% of the file).
+ * The extended tags need the "H" outline, so they are computed here first.
+ */
 export function stripForWeb(font: StoredFont): StoredFont {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured only to drop the field
   const { glyphSvgs, ...rest } = font;
-  return rest;
+  return glyphSvgs?.H ? { ...rest, extendedTags: extendedTagsFor(font) } : rest;
 }
