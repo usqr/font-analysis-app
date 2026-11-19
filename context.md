@@ -258,7 +258,7 @@ Database: `{ version: 1, fonts: StoredFont[] }` in `fonts-db.json`, atomic write
 - CSS-only tooltips with ARIA descriptions (`Tip.tsx`) on the tile tags, axes and the compare "+".
 - Fixes: vf badge overlap, "+" moved on italic, double weight label, Analyze tab remembers the last font.
 - Static build precomputes `extendedTags` before it strips `glyphSvgs`.
-- Open: scope of more extended-tag accuracy (see AGENTS.md).
+- Extended-tag accuracy: `isRegularH()` gate for script/decorative faces, cupped-serif-edge fix. Results and limits in AGENTS.md.
 
 ## Key Modified Files
 

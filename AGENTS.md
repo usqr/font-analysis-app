@@ -34,7 +34,12 @@ npm run dev          # Vite :5173 + Express API :3001 (concurrently)
 - Fixes: `vf` hidden under the source notch (`TopSegment overlappedEnd`), italic no longer moves `+`, fluid weight ruler hides end labels near the value, Analyze remembers its last font (`fa:lastAnalyzedFont`, cleared when the load fails).
 - e2e source-badge selector now uses `aria-label`.
 
-**Open (user to choose scope):** better extended tags. Options: (1) serif/slab accuracy with more glyphs (`n`, `x`, `O`), fewer slab tags on display faces; (2) outline checks for script/mono; (3) the 83 fonts without "H"; (4) all.
+**Extended-tag accuracy (2026-11-19, done):**
+- `isRegularH()` gate: the "H" must show two straight stems of constant width (`STEM_MAX_SPREAD` 0.4, `STEM_MAX_DRIFT` 0.02). If not (script, inline, shaded, slanted), the outline gives no result and the metadata stays. Wrong serif/sans labels on Google script/display faces: 162 → 53.
+- A cupped or rounded serif edge no longer gives `thick=0` (Coustard, Sura, Wellfleet).
+- Results on Google Fonts (1029 families with metadata serif/sans): serif/sans 97.6% (metadata alone 76.4%). Slab vs `/Slab/` tags: precision 68%, recall 65%. That list is incomplete (no Kreon, Trocchi, Holtwood One SC), so the real precision is higher. The slab thresholds (0.55 / 0.35) are the best F1 in a grid search.
+- The 83 fonts without "H" have no "H" in the cmap (non-Latin, emoji). They keep the metadata. Nothing to do.
+- Not done: `n`/`x`/`O` analysis (the remaining errors are flared sans faces, where `n` flares too; about 1 point to gain) and outline checks for script/mono.
 
 **Gotcha:** static weight/slant swaps load a new font file asynchronously. Poll until the rendered `fontFamily` changes.
 
