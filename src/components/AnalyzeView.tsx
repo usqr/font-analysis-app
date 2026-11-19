@@ -181,9 +181,35 @@ const TABS: { id: AnalysisTab; label: string; shortLabel: string }[] = [
   { id: 'glyphs', label: 'Glyphs', shortLabel: 'Glyph' },
 ];
 
+const LAST_FONT_KEY = 'fa:lastAnalyzedFont';
+
+function readLastFont(): string | null {
+  try {
+    return localStorage.getItem(LAST_FONT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeLastFont(id: string | null) {
+  try {
+    if (id) localStorage.setItem(LAST_FONT_KEY, id);
+    else localStorage.removeItem(LAST_FONT_KEY);
+  } catch {
+    // Storage can be blocked (private mode). The tab then opens empty, as before.
+  }
+}
+
 export function AnalyzeView() {
   const { fontId } = useParams<{ fontId: string }>();
   const navigate = useNavigate();
+
+  // Remember the last font, so that the Analyze tab opens it again.
+  useEffect(() => {
+    if (fontId) { writeLastFont(fontId); return; }
+    const last = readLastFont();
+    if (last) navigate(`/analyze/${last}`, { replace: true });
+  }, [fontId, navigate]);
   const [fontData, setFontData] = useState<FontData | null>(null);
   const [analysis, setAnalysis] = useState<FullAnalysis | null>(null);
   const [activeTab, setActiveTab] = useState<AnalysisTab>('contrast');
@@ -335,6 +361,8 @@ export function AnalyzeView() {
       })
       .catch((e) => {
         console.error('Failed to load font from library:', e);
+        // A stale id (font deleted or DB rebuilt) must not open again next time.
+        if (readLastFont() === fontId) writeLastFont(null);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -378,6 +406,7 @@ export function AnalyzeView() {
     setFontData(null);
     setAnalysis(null);
     setActiveTab('contrast');
+    writeLastFont(null);
     if (fontId) navigate('/analyze');
   }, [fontId, navigate]);
 

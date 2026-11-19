@@ -34,3 +34,10 @@ test('stripForWeb removes glyph SVGs and keeps the rest', () => {
   assert.equal('glyphSvgs' in out, false);
   assert.equal(out.weight, 400);
 });
+
+test('stripForWeb keeps the extended tags that need the stripped outlines', () => {
+  const H = { d: 'M0 0L0-1000L100-1000L100-550L400-550L400-1000L500-1000L500 0L400 0L400-450L100-450L100 0Z', advWidth: 500 };
+  const out = stripForWeb(font('ofl/a/A.ttf', { category: 'serif', glyphSvgs: { H } }));
+  assert.equal(out.glyphSvgs, undefined);
+  assert.deepEqual(out.extendedTags, { category: 'sans-serif', slab: false });
+});

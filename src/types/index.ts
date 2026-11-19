@@ -137,6 +137,14 @@ export interface StoredFontMeta {
   scriptSupport?: string[];
   isVariable?: boolean;
   variableAxes?: VariableAxis[];
+  /** Precomputed extended tags, for builds that strip `glyphSvgs`. */
+  extendedTags?: ExtendedTags;
+}
+
+/** Tags from glyph-outline analysis, in addition to the file metadata. */
+export interface ExtendedTags {
+  category?: FontCategory;
+  slab: boolean;
 }
 
 export interface StoredFontData {

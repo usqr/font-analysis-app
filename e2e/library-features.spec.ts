@@ -401,7 +401,7 @@ test.describe('Library features', () => {
     }
 
     const firstCard = gridCards.first();
-    const badge = firstCard.locator('[title="Local font"], [title="Google Fonts"], [title="Local + Google Fonts"]');
+    const badge = firstCard.locator('[aria-label="Local font"], [aria-label="Google Fonts"], [aria-label="Local and Google Fonts"]');
     await expect(badge.first()).toBeVisible();
 
     await page.screenshot({ path: 'e2e/test-results/grid-source-badges.png' });

@@ -23,31 +23,26 @@ npm run dev          # Vite :5173 + Express API :3001 (concurrently)
 - `src/types/index.ts` — `FontFamily`, `StoredFontMeta`, `VariableAxis`.
 - `google-fonts-db.json` — committed pre-built ~3580-font DB (27 MB).
 
-## Current work: gallery (grid) tile redesign
+## Current work: library tags, filters & tile fixes (2026-11-19)
 
-**Design spec:** Figma frame — https://www.figma.com/design/0PiSuUU00u7eJH9J3tWLGZ/CKeditor--Copy-?node-id=1681-269 (frame "bg" `1681:269`). File key `0PiSuUU00u7eJH9J3tWLGZ`. Code Connect maps weight_prop/width_prop → `VerticalAxisSlider` (now removed).
+**Status: implemented, verified (unit + Playwright + browser), not committed.**
 
-**Status: implemented, verified (Playwright), not committed.** Plan: `~/.claude/plans/woolly-foraging-hearth.md`.
+- `src/lib/extendedTags.ts`: **extended tags**, from the "H" outline in `glyphSvgs` (nonzero-winding scanlines). They correct serif/sans and add `slab`. Display/script/mono stay from the metadata. `resolveCategory()`: user override > extended > metadata. Tested against Google `METADATA.pb` (~97% on serif/sans) and `tags/all/families.csv` `/Slab/` (that list is incomplete).
+- The static build strips `glyphSvgs`, so `stripForWeb` (server/staticDb.ts) precomputes `extendedTags` on each font. Server tsconfig includes `extendedTags.ts`.
+- LibraryView: "Tags: file meta / extended" radios (default extended, localStorage `fa:tagMode`), "Slab" chip, All/Variable/Static switch (replaces the "Variable only" checkbox). The filter row wraps.
+- `src/components/Tip.tsx`: CSS-only tooltip with `aria-describedby`. It is used on the source, vf and count tags, the weight ruler, the right axis control and the `+`. The tile root is `overflow-hidden`, so tooltips must stay inside the tile.
+- Fixes: `vf` hidden under the source notch (`TopSegment overlappedEnd`), italic no longer moves `+`, fluid weight ruler hides end labels near the value, Analyze remembers its last font (`fa:lastAnalyzedFont`, cleared when the load fails).
+- e2e source-badge selector now uses `aria-label`.
 
-Rewrote `GridFamilyCard` in `src/components/LibraryView.tsx`:
-- New leaf components (colocated): `TopSegment`, `SourceTag`, `WeightRuler` (stepped=static file-swap / fluid=variable axis step 50), `SlantPicker`, `EdgeAxisControl` (right-edge axis dropdown + dynamic line, covers wdth + opsz/GRAD/etc).
-- `CAT_TOKENS` = neon fg on fg×0.5-black bg (sans `#00ff6a`/`#008035`, serif/mono/display/script analogs).
-- Container-query scaling: card has `@container`; sizes use `clamp(min, Ncqw, max)`. Grid is fluid: `repeat(auto-fill, minmax(min(100%,230px), 1fr))` (LibraryView `data-testid="grid-view"`) — tiles stretch to fill the row and reflow cleanly (≈1 col @430px … 5 cols @1280px).
-- Edge-to-edge top row: star (white when starred) · category chip · count ("N styles" static / "N axes" variable) · `vf` · source (`g`/`l`/`l+g`). Card bottom-corners-only rounded `#080808`, `rounded-b-[12px]` (matches Figma `tile_bg` `rounded-bl/br-[40px]` ≈ 5% of card width). **Do not use `cqw` on the card root** — it declares `@container`, so its own `cqw` resolves against the viewport, not itself (was `5cqw` → 64px). Inner elements (notches/ruler) use `cqw` correctly since they're inside the container. Top-row notches overlap their left neighbour via `ml-[-5cqw]` + raised `z`, so each rounded corner reveals the neighbour's colour (not a dark cutout); star segment is `#515151` with `rounded-br` revealing the category beneath (per Figma raster `fav`).
-- `+` = add-to-compare; centered by default, shifts to `left-[18cqw]` when a non-default variant is previewed (`variantModified`); selected count shows white **semibold**. Whole tile click → analyze `currentFont.id`.
-- Page canvas behind the grid is `#242424` (Figma frame bg) on LibraryView's scroll container, so `#080808` tiles read as darker insets.
-- `WeightRuler` ticks inset `PAD=14%` from top/bottom (clears the top bar); a single available weight renders one centered tick instead of being pinned to the top.
+**Extended-tag accuracy (2026-11-19, done):**
+- `isRegularH()` gate: the "H" must show two straight stems of constant width (`STEM_MAX_SPREAD` 0.4, `STEM_MAX_DRIFT` 0.02). If not (script, inline, shaded, slanted), the outline gives no result and the metadata stays. Wrong serif/sans labels on Google script/display faces: 162 → 53.
+- A cupped or rounded serif edge no longer gives `thick=0` (Coustard, Sura, Wellfleet).
+- Results on Google Fonts (1029 families with metadata serif/sans): serif/sans 97.6% (metadata alone 76.4%). Slab vs `/Slab/` tags: precision 68%, recall 65%. That list is incomplete (no Kreon, Trocchi, Holtwood One SC), so the real precision is higher. The slab thresholds (0.55 / 0.35) are the best F1 in a grid search.
+- The 83 fonts without "H" have no "H" in the cmap (non-Latin, emoji). They keep the metadata. Nothing to do.
+- Not done: `n`/`x`/`O` analysis (the remaining errors are flared sans faces, where `n` flares too; about 1 point to gain) and outline checks for script/mono.
 
-Supporting edits:
-- `src/lib/useFontFace.ts` — `loadedForRef` keyed on `fontId`, **plus** an explicit `useEffect` that calls `startLoad()` on post-mount `fontId` change. (Ref re-attachment alone did **not** reliably re-trigger the load — static weight/italic swaps silently kept the old file even though `currentFont.id` updated.) Initial lazy IntersectionObserver kept.
-- `src/lib/fontFamilies.ts` — added `uniqueSortedWeights()`, `fontForWeightStyleWidth()`.
-- `src/index.css` — bundled Lato Light/Medium/Black (`public/fonts/`), `--font-ui` theme font (`font-ui` utility).
-- `e2e/library-features.spec.ts` — count regex `/(styles?|ax[ie]s)/`; grid source-badge selector `[title=…]` (now a div, not span).
-
-**Verified (browser + e2e):** variable weight→`font-variation-settings` (300→550), static weight→file swap (id changes & loads), italic toggle→file swap, `+` moves left + count semibold on selection; notch overlaps / star `#515151` / canvas `#242424` confirmed against Figma; responsive 430↔1280px; e2e 14 pass / 5 skip (conditional list-view); build OK.
-
-**Key gotcha:** static weight/slant swaps load a *new* font file (async `document.fonts.load`) — when testing the rendered `fontFamily`, poll until it changes; 1–2 rAFs is too short.
+**Gotcha:** static weight/slant swaps load a new font file asynchronously. Poll until the rendered `fontFamily` changes.
 
 ## Conventions
 
-Conventional commits. CK repo — check githooks for JIRA `TDX-XXXX` format if committing.
+Conventional commits (`feat:`, `fix:`, `chore:`, …).
