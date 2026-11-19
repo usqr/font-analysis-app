@@ -8,6 +8,7 @@ import { groupByFamily, variantLabel, groupByWidth, familyKey, uniqueSortedWeigh
 import { useFontFace } from '../lib/useFontFace';
 import { HistogramFilter } from './HistogramFilter';
 import { getAxisInfo } from '../lib/axisDescriptions';
+import { IS_STATIC } from '../lib/env';
 
 const CATEGORIES: { id: FontCategory; label: string }[] = [
   { id: 'serif', label: 'Serif' },
@@ -554,6 +555,7 @@ export function LibraryView() {
           </button>
         </div>
 
+        {!IS_STATIC && (<>
         <button
           onClick={() => setShowScanDialog(true)}
           className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500"
@@ -600,6 +602,7 @@ export function LibraryView() {
             )}
           </span>
         )}
+        </>)}
         {viewMode === 'list' && allFonts.length > 0 && (
           <button
             onClick={handleToggleCollapse}
@@ -651,7 +654,7 @@ export function LibraryView() {
               &#9733; Starred
             </button>
             <span className="mx-1 text-neutral-700">|</span>
-            {([['local', 'Local'], ['google', 'Google']] as const).map(([src, label]) => (
+            {!IS_STATIC && ([['local', 'Local'], ['google', 'Google']] as const).map(([src, label]) => (
               <button
                 key={src}
                 onClick={() => setSelectedSource((prev) => prev === src ? null : src)}
@@ -664,7 +667,7 @@ export function LibraryView() {
                 {label}
               </button>
             ))}
-            <span className="mx-1 text-neutral-700">|</span>
+            {!IS_STATIC && <span className="mx-1 text-neutral-700">|</span>}
             {CATEGORIES.map((cat) => (
               <button
                 key={cat.id}
@@ -1596,6 +1599,7 @@ function FamilyCard({
                   >
                     Analyze
                   </button>
+                  {!IS_STATIC && (<>
                   <button
                     onClick={() => onRefresh(font.id)}
                     className="rounded px-2 py-0.5 text-xs text-emerald-400 transition-colors hover:bg-emerald-500/10"
@@ -1617,6 +1621,7 @@ function FamilyCard({
                   >
                     Remove
                   </button>
+                  </>)}
                 </div>
               </div>
             ))}

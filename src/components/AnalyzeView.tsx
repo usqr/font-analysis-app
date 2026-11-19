@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import * as opentype from 'opentype.js';
 import type { FontData, FullAnalysis, AnalysisTab } from '../types';
 import { FontUploader } from './FontUploader';
@@ -21,6 +21,7 @@ import { extractOTFFeatures, OTF_FEATURE_NAMES } from '../lib/otfFeatures';
 import type { StoredFontMeta, FontCategory, VariableAxis } from '../types';
 import { useFontFace } from '../lib/useFontFace';
 import { getAxisInfo } from '../lib/axisDescriptions';
+import { IS_STATIC } from '../lib/env';
 
 const WIDTH_CLASS_NAMES: Record<number, string> = {
   1: 'Ultra-Condensed', 2: 'Extra-Condensed', 3: 'Condensed',
@@ -496,10 +497,12 @@ export function AnalyzeView() {
               Analyze a Font
             </h1>
             <p className="mt-2 text-neutral-400">
-              Upload a font file or select one from the library
+              {IS_STATIC
+                ? <>Select a font in the <Link to="/" className="text-blue-400 hover:underline">library</Link></>
+                : 'Upload a font file or select one from the library'}
             </p>
           </div>
-          <FontUploader onFontLoaded={handleFontLoaded} />
+          {!IS_STATIC && <FontUploader onFontLoaded={handleFontLoaded} />}
         </div>
       </div>
     );

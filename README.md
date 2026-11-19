@@ -59,6 +59,22 @@ npm run build:google-db
 
 This scans all fonts in the cloned repo, computes metrics, extracts SVG vectors, and writes `google-fonts-db.json`.
 
+### GitHub Pages (static build)
+
+`npm run build:pages` makes a static build of the Google Fonts set in `dist/`. It has no Express server:
+
+- The font list is `dist/google-fonts.json` (`google-fonts-db.json` without glyph SVGs, ~7 MB).
+- Font files come from jsDelivr (or `raw.githubusercontent.com` for files over 20 MB) at the `google/fonts` commit of `google-fonts/`. Moved files are remapped. Missing files are dropped.
+- Folder scans, font uploads, deletes, and the Local/Google filter are hidden. Stars, categories, and tags are kept in `localStorage`.
+- Routes use the URL hash (`#/analyze/<id>`), because Pages has no SPA fallback.
+
+`.github/workflows/pages.yml` deploys on each push to `master`. It fetches only the file list of `google/fonts` at `GOOGLE_FONTS_REF`. Update that SHA when you rebuild `google-fonts-db.json`.
+
+```bash
+npm run test:unit     # Unit tests (node:test)
+npm run test:static   # Builds the static site and runs e2e-static/ against vite preview
+```
+
 ### Other Commands
 
 ```bash

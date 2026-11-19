@@ -1,4 +1,6 @@
 import type { FontDatabaseResponse, StoredFontMeta, StoredFontData, ScanResult, FontCategory } from '../types';
+import { IS_STATIC } from './env';
+import * as staticApi from './staticApi';
 
 const BASE = '/api';
 
@@ -10,7 +12,13 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** URL of a font file, for `@font-face` and `document.fonts.load`. */
+export function fontFileUrl(id: string): string {
+  return IS_STATIC ? staticApi.staticFontFileUrl(id) : `${BASE}/fonts/${id}/file`;
+}
+
 export async function fetchDatabase(): Promise<FontDatabaseResponse> {
+  if (IS_STATIC) return staticApi.fetchDatabase();
   const res = await fetch(`${BASE}/database`);
   return json<FontDatabaseResponse>(res);
 }
@@ -91,6 +99,7 @@ export async function scanFolderStream(
 }
 
 export async function fetchFontData(id: string): Promise<StoredFontData> {
+  if (IS_STATIC) return staticApi.fetchFontData(id);
   const res = await fetch(`${BASE}/fonts/${id}/data`);
   return json<StoredFontData>(res);
 }
@@ -119,6 +128,7 @@ export async function deleteFont(id: string): Promise<void> {
 }
 
 export async function toggleStarFamily(key: string): Promise<{ starred: boolean; starredFamilies: string[] }> {
+  if (IS_STATIC) return staticApi.toggleStarFamily(key);
   const res = await fetch(`${BASE}/starred-families`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -128,6 +138,7 @@ export async function toggleStarFamily(key: string): Promise<{ starred: boolean;
 }
 
 export async function fetchFontPaths(): Promise<string[]> {
+  if (IS_STATIC) return [];
   const res = await fetch(`${BASE}/font-paths`);
   const data = await json<{ paths: string[] }>(res);
   return data.paths;
@@ -166,6 +177,7 @@ export async function clearDatabase(): Promise<void> {
 }
 
 export async function computeMetrics(): Promise<{ updated: number; total: number }> {
+  if (IS_STATIC) return { updated: 0, total: 0 };
   const res = await fetch(`${BASE}/database/compute-metrics`, { method: 'POST' });
   return json<{ updated: number; total: number }>(res);
 }
@@ -182,6 +194,7 @@ export async function setFontCategory(id: string, category: FontCategory): Promi
 }
 
 export async function bulkSetCategory(ids: string[], category: FontCategory): Promise<{ updated: number }> {
+  if (IS_STATIC) return staticApi.bulkSetCategory(ids, category);
   const res = await fetch(`${BASE}/fonts/bulk-category`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -200,6 +213,7 @@ export async function setFontTags(id: string, tags: string[]): Promise<void> {
 }
 
 export async function bulkSetTags(ids: string[], tags: string[]): Promise<{ updated: number }> {
+  if (IS_STATIC) return staticApi.bulkSetTags(ids, tags);
   const res = await fetch(`${BASE}/fonts/bulk-tags`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -209,6 +223,7 @@ export async function bulkSetTags(ids: string[], tags: string[]): Promise<{ upda
 }
 
 export async function fetchAllTags(): Promise<string[]> {
+  if (IS_STATIC) return staticApi.fetchAllTags();
   const res = await fetch(`${BASE}/tags`);
   const data = await json<{ tags: string[] }>(res);
   return data.tags;
