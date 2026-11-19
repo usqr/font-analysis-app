@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { fontFileUrl } from './api';
 
 const fontCache = new Map<string, string>();
 const loadingSet = new Set<string>();
@@ -22,7 +23,7 @@ async function loadFont(fontId: string): Promise<string> {
 
   loadingSet.add(fontId);
   try {
-    const url = `/api/fonts/${fontId}/file`;
+    const url = fontFileUrl(fontId);
     const style = document.createElement('style');
     style.textContent = `@font-face { font-family: '${cssName}'; src: url('${url}'); font-display: swap; }`;
     document.head.appendChild(style);

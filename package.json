@@ -10,7 +10,10 @@
     "build": "tsc -b && vite build",
     "build:google-db": "tsx server/buildGoogleFontsDb.ts",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:pages": "tsc -b && VITE_STATIC=1 vite build --base=./ && tsx server/buildStaticDb.ts dist",
+    "test:unit": "tsx --test test/*.test.ts",
+    "test:static": "playwright test -c playwright.static.config.ts"
   },
   "dependencies": {
     "cors": "^2.8.6",

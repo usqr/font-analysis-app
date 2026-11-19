@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect, Component, type ReactNode } 
 import type { Font, Glyph } from 'opentype.js';
 import type { FontData } from '../types';
 import { OTF_FEATURE_NAMES } from '../lib/otfFeatures';
+import { fontFileUrl } from '../lib/api';
 
 class GlyphsErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -130,7 +131,7 @@ function useGlyphFontFace(fontId: string): string | null {
 
     let cancelled = false;
     const cssName = `__glyph_${fontId.slice(0, 8)}`;
-    const url = `/api/fonts/${fontId}/file`;
+    const url = fontFileUrl(fontId);
     const style = document.createElement('style');
     style.textContent = `@font-face { font-family: '${cssName}'; src: url('${url}'); font-display: block; }`;
     document.head.appendChild(style);
