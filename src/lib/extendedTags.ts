@@ -104,19 +104,56 @@ export interface SerifMeasure {
 }
 
 const STEP = 0.005;
+/** Largest part of the height (from the edge) that a cupped or rounded serif edge can use. */
+const EDGE_MAX = 0.03;
+
+/** Heights (part of the cap height, from the baseline) where the "H" must show two clean stems. */
+const STEM_HEIGHTS = [0.2, 0.25, 0.3, 0.7, 0.75, 0.8];
+/** Maximum difference between the widest and the narrowest stem run, relative to the mean width. */
+export const STEM_MAX_SPREAD = 0.4;
+/** Maximum horizontal movement of the left stem from 20% to 80% of the height, relative to the height. */
+export const STEM_MAX_DRIFT = 0.02;
+
+/**
+ * True if the "H" has two straight stems of constant width. Script and
+ * decorative faces (inline, outline, shaded, slanted, brush) usually fail
+ * this test. For them, a wide stroke ending is not a serif.
+ */
+export function isRegularH(polys: Pt[][], minY: number, maxY: number): boolean {
+  const h = maxY - minY;
+  const widths: number[] = [];
+  const centers: number[] = [];
+  for (const t of STEM_HEIGHTS) {
+    const runs = scanRuns(polys, maxY - t * h);
+    if (runs.length > 2) return false;
+    if (runs.length < 2) continue; // the crossbar joins the stems at this height
+    for (const [a, b] of runs) widths.push(b - a);
+    centers.push((runs[0][0] + runs[0][1]) / 2);
+  }
+  if (centers.length < 4) return false;
+  const mean = widths.reduce((s, x) => s + x, 0) / widths.length;
+  const spread = (Math.max(...widths) - Math.min(...widths)) / mean;
+  const drift = Math.abs(centers[0] - centers[centers.length - 1]) / h;
+  return spread <= STEM_MAX_SPREAD && drift <= STEM_MAX_DRIFT;
+}
+
+function bounds(polys: Pt[][]): { minY: number; maxY: number } {
+  let minY = Infinity, maxY = -Infinity;
+  for (const p of polys) for (const pt of p) { minY = Math.min(minY, pt.y); maxY = Math.max(maxY, pt.y); }
+  return { minY, maxY };
+}
 
 /**
  * Measures the stroke endings of the "H" glyph. The left stem width is
  * measured at 30% of the cap height. Serifs show as a wider run near the
- * baseline and near the cap line.
+ * baseline and near the cap line. Returns null if the "H" is not regular.
  */
 export function measureSerifs(glyph: GlyphSvg | undefined): SerifMeasure | null {
   if (!glyph?.d) return null;
   const polys = pathToPolygons(glyph.d);
-  let minY = Infinity, maxY = -Infinity;
-  for (const p of polys) for (const pt of p) { minY = Math.min(minY, pt.y); maxY = Math.max(maxY, pt.y); }
+  const { minY, maxY } = bounds(polys);
   const h = maxY - minY;
-  if (!(h > 0)) return null;
+  if (!(h > 0) || !isRegularH(polys, minY, maxY)) return null;
 
   const stemRuns = scanRuns(polys, maxY - 0.3 * h);
   if (stemRuns.length < 2) return null;
@@ -139,8 +176,11 @@ export function measureSerifs(glyph: GlyphSvg | undefined): SerifMeasure | null 
   // continues until the stroke is less than 10% wider than the stem.
   const keep = w + 0.7 * (foot - w);
   let f = STEP;
+  // Skip a cupped or rounded serif edge: there the scanline cuts only the serif tips.
+  while (f <= EDGE_MAX && widthAt(f) < keep) f += STEP;
+  const start = f;
   while (f <= 0.3 && widthAt(f) >= keep) f += STEP;
-  const thick = f - STEP;
+  const thick = f - start;
   while (f <= 0.4 && widthAt(f) > 1.1 * w) f += STEP;
   return { foot: foot / w, thick: (thick * h) / w, bracket: ((f - thick) * h) / w };
 }

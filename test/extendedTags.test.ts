@@ -43,6 +43,26 @@ test('thick unbracketed serifs are slab', () => {
   assert.equal(classifySerifs(SLAB_H), 'slab');
 });
 
+test('a cupped serif edge does not hide a slab', () => {
+  // A 10-unit notch under and over the left stem: the first scanlines cut only the serif tips.
+  const cupped = SLAB_H.d
+    .replace('M-100 0L200 0', 'M-100 0L0 0L50-10L100 0L200 0')
+    .replace('L200-1000L-100-1000', 'L200-1000L100-1000L50-990L0-1000L-100-1000');
+  assert.equal(classifySerifs({ d: cupped, advWidth: 600 }), 'slab');
+});
+
+// Moves each point right by 20% of its height, as in a slanted script "H".
+const skew = (d: string) => d.replace(/(-?\d+) ?(-?\d+)/g, (_, x, y) => `${+x - 0.2 * +y} ${y}`);
+
+test('slanted stems are not regular, so the outline gives no result', () => {
+  assert.equal(classifySerifs({ d: skew(SERIF_H.d), advWidth: 800 }), null);
+});
+
+test('inline stems (a hole in each stem) are not regular', () => {
+  const holes = 'M40-100L60-100L60-400L40-400ZM440-100L460-100L460-400L440-400Z';
+  assert.equal(classifySerifs({ d: SANS_H.d + holes, advWidth: 500 }), null);
+});
+
 test('a missing outline gives no result', () => {
   assert.equal(classifySerifs(undefined), null);
   assert.equal(classifySerifs({ d: 'M0 0L10 0Z', advWidth: 10 }), null);
