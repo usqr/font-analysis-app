@@ -107,6 +107,8 @@
   .axis-head { display: flex; justify-content: space-between; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--text-muted); }
   .axis-head b { font-weight: 400; color: var(--text); }
   .axis-head output { font-family: var(--font-mono); color: var(--text); }
+  .axis-reset { align-self: flex-start; }
+  .action-error { align-self: center; font-size: var(--fs-xs); color: var(--danger); }
   .axis-preview {
     margin: var(--sp-2) 0 0; padding: var(--sp-3); overflow: hidden;
     border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-1);

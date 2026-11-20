@@ -1,7 +1,7 @@
-import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect, type CSSProperties, type RefObject } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import * as opentype from 'opentype.js';
-import type { FontData, FullAnalysis, AnalysisTab } from '../types';
+import type { FontData, FullAnalysis, AnalysisTab, StoredFontMeta, FontCategory, VariableAxis } from '../types';
 import { FontUploader } from './FontUploader';
 import { ContrastView } from './ContrastView';
 import { XHeightView } from './XHeightView';
@@ -16,12 +16,17 @@ import { analyzeWeight } from '../analysis/weight';
 import { analyzeSpacing } from '../analysis/spacing';
 import { exportAnalysisJSON, exportCanvasAsAvif } from '../lib/exportUtils';
 import { fetchFontData, fetchDatabase, toggleStarFamily, bulkSetCategory } from '../lib/api';
-import { groupByWidth, widthQualifier, weightLabel, superFamilyName, familyKey } from '../lib/fontFamilies';
-import { extractOTFFeatures, OTF_FEATURE_NAMES } from '../lib/otfFeatures';
-import type { StoredFontMeta, FontCategory, VariableAxis } from '../types';
+import { superFamilyName, familyKey } from '../lib/fontFamilies';
+import { extractOTFFeatures } from '../lib/otfFeatures';
 import { useFontFace } from '../lib/useFontFace';
-import { getAxisInfo } from '../lib/axisDescriptions';
 import { IS_STATIC } from '../lib/env';
+import { CAT_COLOR, CAT_LABELS } from '../lib/libraryFilters';
+import { AnalysisSide, type RawMetaSection, type Stat } from './analyze/AnalysisSide';
+import { FamilyNav } from './analyze/FamilyNav';
+import { LocalFontActions } from './analyze/LocalFontActions';
+import { SubTabs, type TabDef } from './analyze/SubTabs';
+import { CategoryMenu } from './library/LibraryMenus';
+import { Icon } from './ui/Icon';
 
 const WIDTH_CLASS_NAMES: Record<number, string> = {
   1: 'Ultra-Condensed', 2: 'Extra-Condensed', 3: 'Condensed',
@@ -42,11 +47,6 @@ const MAC_STYLE_FLAGS: [number, string][] = [
   [0x01, 'Bold'], [0x02, 'Italic'], [0x04, 'Underline'],
   [0x08, 'Outline'], [0x10, 'Shadow'], [0x20, 'Condensed'], [0x40, 'Extended'],
 ];
-
-interface RawMetaSection {
-  title: string;
-  entries: { label: string; value: string }[];
-}
 
 function extractRawMetadata(font: import('opentype.js').Font): RawMetaSection[] {
   const sections: RawMetaSection[] = [];
@@ -125,60 +125,13 @@ function extractRawMetadata(font: import('opentype.js').Font): RawMetaSection[] 
   return sections;
 }
 
-function AnalyzeAxisInfoButton({ tag, name }: { tag: string; name?: string }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const info = getAxisInfo(tag, name);
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-  return (
-    <div className="relative inline-flex">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex h-4 w-4 items-center justify-center rounded-full bg-neutral-800 text-[9px] font-bold text-neutral-500 hover:bg-neutral-700 hover:text-neutral-300"
-        title={`About ${info.name}`}
-      >
-        i
-      </button>
-      {open && (
-        <div ref={ref} className="absolute bottom-full left-1/2 z-40 mb-2 w-60 -translate-x-1/2 rounded-lg border border-neutral-700 bg-neutral-900 p-3 shadow-xl">
-          <h4 className="mb-1 text-xs font-semibold text-neutral-200">{info.name} <span className="font-mono text-neutral-500">({tag})</span></h4>
-          <p className="text-[11px] leading-relaxed text-neutral-400">{info.description}</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-const CATEGORIES: { id: FontCategory; label: string }[] = [
-  { id: 'serif', label: 'Serif' },
-  { id: 'sans-serif', label: 'Sans-Serif' },
-  { id: 'monospace', label: 'Monospace' },
-  { id: 'display', label: 'Display' },
-  { id: 'script', label: 'Script' },
-];
-
-const CAT_COLORS: Record<string, string> = {
-  'serif': 'bg-rose-500/15 text-rose-400 border-rose-500/30',
-  'sans-serif': 'bg-sky-500/15 text-sky-400 border-sky-500/30',
-  'monospace': 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-  'display': 'bg-purple-500/15 text-purple-400 border-purple-500/30',
-  'script': 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-};
-
-const TABS: { id: AnalysisTab; label: string; shortLabel: string }[] = [
-  { id: 'contrast', label: 'Contrast', shortLabel: 'Contrast' },
-  { id: 'xheight', label: 'X-Height', shortLabel: 'X-Ht' },
-  { id: 'proportions', label: 'Proportions', shortLabel: 'Props' },
-  { id: 'weight', label: 'Weight', shortLabel: 'Weight' },
-  { id: 'spacing', label: 'Spacing', shortLabel: 'Space' },
-  { id: 'glyphs', label: 'Glyphs', shortLabel: 'Glyph' },
+const TABS: TabDef[] = [
+  { id: 'contrast', label: 'Contrast' },
+  { id: 'xheight', label: 'X-Height' },
+  { id: 'proportions', label: 'Proportions' },
+  { id: 'weight', label: 'Weight' },
+  { id: 'spacing', label: 'Spacing' },
+  { id: 'glyphs', label: 'Glyphs' },
 ];
 
 const LAST_FONT_KEY = 'fa:lastAnalyzedFont';
@@ -220,12 +173,11 @@ export function AnalyzeView() {
   const [currentMeta, setCurrentMeta] = useState<StoredFontMeta | null>(null);
   const [otfFeatures, setOtfFeatures] = useState<string[]>([]);
   const [rawMeta, setRawMeta] = useState<RawMetaSection[]>([]);
-  const [showRawMeta, setShowRawMeta] = useState(false);
   const [familyStarred, setFamilyStarred] = useState(false);
   const [familyStarKey, setFamilyStarKey] = useState('');
-  const [showCatPopover, setShowCatPopover] = useState(false);
   const [effectiveCategory, setEffectiveCategory] = useState<FontCategory | null>(null);
-  const catPopoverRef = useRef<HTMLDivElement>(null);
+  const [catAnchor, setCatAnchor] = useState<HTMLElement | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
   const [variableAxes, setVariableAxes] = useState<VariableAxis[]>([]);
   const [axisValues, setAxisValues] = useState<Record<string, number>>({});
   const { fontFamily: previewFontFamily } = useFontFace(fontId ?? null);
@@ -369,7 +321,7 @@ export function AnalyzeView() {
       });
 
     return () => { cancelled = true; };
-  }, [fontId, runAnalysis]);
+  }, [fontId, runAnalysis, reloadTick]);
 
   useEffect(() => {
     const data = fontDataRef.current;
@@ -377,19 +329,6 @@ export function AnalyzeView() {
       ensureTabAnalysis(activeTab, data);
     }
   }, [activeTab, ensureTabAnalysis]);
-
-  const familyNav = useMemo(() => {
-    if (familyMembers.length <= 1 || !currentMeta) return null;
-    const widthGroups = groupByWidth(familyMembers);
-    const widthKeys = Array.from(widthGroups.keys());
-    const currentWidth = widthQualifier(currentMeta) || 'Default';
-    const currentGroup = widthGroups.get(currentWidth) ?? { normal: [], italic: [] };
-    const isItalic = currentMeta.style === 'italic' || currentMeta.style === 'oblique';
-    const hasItalics = currentGroup.italic.length > 0;
-    const hasNormals = currentGroup.normal.length > 0;
-    const weightList = isItalic ? currentGroup.italic : currentGroup.normal;
-    return { widthGroups, widthKeys, currentWidth, currentGroup, isItalic, hasItalics, hasNormals, weightList };
-  }, [familyMembers, currentMeta]);
 
   const handleFamilyNav = useCallback((newId: string) => {
     navigate(`/analyze/${newId}`);
@@ -423,34 +362,11 @@ export function AnalyzeView() {
     }
   }, [fontData, activeTab]);
 
-  const handleCategoryOverride = useCallback(async (cat: FontCategory) => {
-    const ids = familyMembers.map((f) => f.id);
-    if (ids.length === 0) return;
-    setEffectiveCategory(cat);
-    setShowCatPopover(false);
-    try {
-      await bulkSetCategory(ids, cat);
-    } catch {
-      setEffectiveCategory(currentMeta?.categoryOverride ?? currentMeta?.category ?? null);
-    }
-  }, [familyMembers, currentMeta]);
-
-  useEffect(() => {
-    if (!showCatPopover) return;
-    const handleClick = (e: MouseEvent) => {
-      if (catPopoverRef.current && !catPopoverRef.current.contains(e.target as Node)) {
-        setShowCatPopover(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [showCatPopover]);
-
-  const summaryStats = useMemo<{ label: string; value: string }[]>(() => {
+  const summaryStats = useMemo<Stat[]>(() => {
     if (!analysis) return [];
     switch (activeTab) {
       case 'contrast': {
-        const items: { label: string; value: string }[] = [];
+        const items: Stat[] = [];
         if (analysis.contrastLower) {
           items.push(
             { label: '"o" contrast', value: `${analysis.contrastLower.contrastRatio.toFixed(2)}:1` },
@@ -506,445 +422,141 @@ export function AnalyzeView() {
     }
   }, [analysis, activeTab]);
 
+  const handleCategoryOverride = useCallback(async (cat: FontCategory) => {
+    setCatAnchor(null);
+    const ids = familyMembers.map((f) => f.id);
+    if (ids.length === 0) return;
+    setEffectiveCategory(cat);
+    try {
+      await bulkSetCategory(ids, cat);
+    } catch {
+      setEffectiveCategory(currentMeta?.categoryOverride ?? currentMeta?.category ?? null);
+    }
+  }, [familyMembers, currentMeta]);
+
+  const toggleStar = useCallback(async () => {
+    setFamilyStarred((v) => !v);
+    try {
+      await toggleStarFamily(familyStarKey);
+    } catch {
+      setFamilyStarred((v) => !v);
+    }
+  }, [familyStarKey]);
+
+  // An uploaded font has no library id, and the glyph view needs one.
+  const tabs = useMemo(() => (fontId ? TABS : TABS.filter((t) => t.id !== 'glyphs')), [fontId]);
+
   if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="flex items-center gap-3">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-600 border-t-blue-400" />
-          <span className="text-neutral-400">Loading font from library...</span>
-        </div>
-      </div>
-    );
+    return <div className="loading-state"><span className="spinner" aria-hidden="true" />Loading font from the library…</div>;
   }
 
   if (!fontData) {
     return (
-      <div className="flex h-full items-center justify-center p-4">
-        <div className="w-full max-w-2xl">
-          <div className="mb-8 text-center">
-            <h1 className="text-3xl font-bold tracking-tight text-white">
-              Analyze a Font
-            </h1>
-            <p className="mt-2 text-neutral-400">
-              {IS_STATIC
-                ? <>Select a font in the <Link to="/" className="text-blue-400 hover:underline">library</Link></>
-                : 'Upload a font file or select one from the library'}
-            </p>
+      <div className="analyze-page">
+        <section className="start" aria-labelledby="start-title">
+          <div className="start-head">
+            <h1 className="start-title" id="start-title">Analyze a Font</h1>
+            <p className="start-sub">Upload a font file, select a sample, or open a font in the <Link to="/">library</Link>.</p>
           </div>
-          {!IS_STATIC && <FontUploader onFontLoaded={handleFontLoaded} />}
-        </div>
+          <FontUploader onFontLoaded={handleFontLoaded} />
+        </section>
       </div>
     );
   }
 
+  const glyphs = activeTab === 'glyphs';
   return (
-    <div className="flex h-full flex-col">
-      <header className="border-b border-neutral-800 px-4 py-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={handleReset}
-              className="rounded-md px-3 py-1.5 text-xs text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white"
-            >
-              &larr; Change font
-            </button>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-lg font-semibold text-white">
-                  {fontData.familyName}
-                </h1>
-                {currentMeta && (
-                  <>
-                    <button
-                      onClick={async () => {
-                        setFamilyStarred((v) => !v);
-                        try { await toggleStarFamily(familyStarKey); } catch {
-                          setFamilyStarred((v) => !v);
-                        }
-                      }}
-                      className="text-lg leading-none transition-colors"
-                      title={familyStarred ? 'Unstar family' : 'Star family'}
-                    >
-                      {familyStarred
-                        ? <span className="text-amber-400">&#9733;</span>
-                        : <span className="text-neutral-600 hover:text-amber-400/60">&#9734;</span>}
-                    </button>
-                    <span
-                      className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
-                        currentMeta.source === 'google'
-                          ? 'bg-blue-500/15 text-blue-400'
-                          : 'bg-neutral-700/50 text-neutral-500'
-                      }`}
-                      title={currentMeta.source === 'google' ? 'Google Fonts' : 'Local font'}
-                    >
-                      {currentMeta.source === 'google' ? 'G' : 'L'}
-                    </span>
-                    {effectiveCategory && (
-                      <div className="relative">
-                        <button
-                          onClick={() => setShowCatPopover((v) => !v)}
-                          className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${CAT_COLORS[effectiveCategory] ?? 'bg-neutral-700/30 text-neutral-400 border-neutral-600'}`}
-                          title={`Category: ${effectiveCategory}`}
-                          data-testid="analyze-category-badge"
-                        >
-                          {effectiveCategory}
-                        </button>
-                        {showCatPopover && (
-                          <div ref={catPopoverRef} className="absolute left-0 top-full z-50 mt-1 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-xl">
-                            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">Set Category</div>
-                            {CATEGORIES.map((cat) => (
-                              <button
-                                key={cat.id}
-                                onClick={() => handleCategoryOverride(cat.id)}
-                                className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-neutral-800 ${
-                                  effectiveCategory === cat.id ? 'text-white' : 'text-neutral-400'
-                                }`}
-                              >
-                                <span className={`inline-block h-2 w-2 rounded-full ${CAT_COLORS[cat.id]?.split(' ')[0] ?? ''}`} />
-                                {cat.label}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-              <p className="text-xs text-neutral-400">
-                {fontData.styleName} &middot; {fontData.glyphCount} glyphs &middot;{' '}
-                {fontData.unitsPerEm} UPM
-              </p>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={handleExportJSON}
-              disabled={!analysis}
-              className="rounded-md border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 transition-colors hover:bg-neutral-800 disabled:opacity-40"
-            >
-              Export JSON
-            </button>
-            <button
-              onClick={handleExportImage}
-              disabled={!analysis}
-              className="rounded-md border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 transition-colors hover:bg-neutral-800 disabled:opacity-40"
-            >
-              Export Image
-            </button>
-          </div>
-        </div>
-        {familyNav && (
-          <div className="mt-2 flex items-center gap-3" data-testid="family-nav">
-            {familyNav.widthKeys.length > 1 && (
-              <select
-                value={familyNav.currentWidth}
-                onChange={(e) => {
-                  const wk = e.target.value;
-                  const grp = familyNav.widthGroups.get(wk);
-                  if (!grp) return;
-                  const list = familyNav.isItalic && grp.italic.length > 0 ? grp.italic : grp.normal;
-                  const match = list.find((f) => f.weight === currentMeta!.weight) ?? list[0];
-                  if (match) handleFamilyNav(match.id);
-                }}
-                className="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-200 outline-none focus:border-blue-500"
-                data-testid="family-width-select"
-              >
-                {familyNav.widthKeys.map((wk) => (
-                  <option key={wk} value={wk}>{wk}</option>
-                ))}
-              </select>
-            )}
-            <select
-              value={fontId}
-              onChange={(e) => handleFamilyNav(e.target.value)}
-              className="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-200 outline-none focus:border-blue-500"
-              data-testid="family-weight-select"
-            >
-              {familyNav.weightList.map((f) => (
-                <option key={f.id} value={f.id}>{weightLabel(f.weight)}</option>
-              ))}
-            </select>
-            {familyNav.hasNormals && familyNav.hasItalics && (
-              <div className="flex rounded border border-neutral-700" data-testid="family-style-toggle">
-                <button
-                  onClick={() => {
-                    const normals = familyNav.currentGroup.normal;
-                    const match = normals.find((f) => f.weight === currentMeta!.weight) ?? normals[0];
-                    if (match) handleFamilyNav(match.id);
-                  }}
-                  className={`px-2.5 py-1 text-xs transition-colors ${
-                    !familyNav.isItalic ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'
-                  }`}
-                >
-                  Upright
-                </button>
-                <button
-                  onClick={() => {
-                    const italics = familyNav.currentGroup.italic;
-                    const match = italics.find((f) => f.weight === currentMeta!.weight) ?? italics[0];
-                    if (match) handleFamilyNav(match.id);
-                  }}
-                  className={`px-2.5 py-1 text-xs transition-colors ${
-                    familyNav.isItalic ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'
-                  }`}
-                >
-                  Italic
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-        {variableAxes.length > 0 && (
-          <div className="mt-3 rounded-lg border border-teal-500/20 bg-teal-500/5 p-3">
-            <div className="mb-2 flex items-center gap-2">
-              <span className="inline-flex h-5 items-center justify-center rounded-full bg-teal-500/15 px-1.5 text-[10px] font-bold text-teal-400">VF</span>
-              <span className="text-xs font-medium text-teal-400">Variable Font Axes</span>
-              <button
-                onClick={() => setAxisValues(Object.fromEntries(variableAxes.map((a) => [a.tag, a.defaultValue])))}
-                className="ml-auto text-xs text-neutral-500 hover:text-neutral-300"
-              >
-                Reset
-              </button>
-            </div>
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-              {variableAxes.map((axis) => {
-                const info = getAxisInfo(axis.tag, axis.name);
-                return (
-                  <div key={axis.tag} className="flex items-center gap-2">
-                    <span className="w-10 text-xs font-medium uppercase text-neutral-400" title={info.description}>{axis.tag}</span>
-                    <AnalyzeAxisInfoButton tag={axis.tag} name={axis.name} />
-                    <input
-                      type="range"
-                      min={axis.minValue}
-                      max={axis.maxValue}
-                      step={axis.maxValue - axis.minValue > 10 ? 1 : 0.01}
-                      value={axisValues[axis.tag] ?? axis.defaultValue}
-                      onChange={(e) => setAxisValues((prev) => ({ ...prev, [axis.tag]: parseFloat(e.target.value) }))}
-                      className="w-28 accent-teal-500"
-                    />
-                    <span className="w-12 text-right text-xs tabular-nums text-neutral-500">
-                      {(axisValues[axis.tag] ?? axis.defaultValue).toFixed(axis.maxValue - axis.minValue > 10 ? 0 : 2)}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-            {previewFontFamily && (
-              <div
-                className="mt-3 overflow-hidden rounded border border-neutral-800 bg-neutral-900 px-4 py-3 text-neutral-200"
-                style={{
-                  fontFamily: `'${previewFontFamily}', sans-serif`,
-                  fontVariationSettings: Object.entries(axisValues)
-                    .map(([tag, val]) => `'${tag}' ${val}`)
-                    .join(', '),
-                  fontSize: '2rem',
-                  lineHeight: 1.4,
-                }}
-              >
-                The quick brown fox jumps over the lazy dog
-              </div>
-            )}
-          </div>
-        )}
-      </header>
-
-      <nav className="flex border-b border-neutral-800" data-testid="analysis-tabs">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
-              activeTab === tab.id
-                ? 'border-b-2 border-blue-500 text-white'
-                : 'text-neutral-400 hover:text-neutral-200'
-            }`}
-            data-testid={`tab-${tab.id}`}
-          >
-            <span className="hidden sm:inline">{tab.label}</span>
-            <span className="sm:hidden">{tab.shortLabel}</span>
+    <div className="analyze-page">
+      <section className="loaded" aria-labelledby="font-name">
+        <header className="font-head">
+          <button type="button" className="btn btn-ghost" onClick={handleReset}>
+            <Icon name="back" />
+            Change font
           </button>
-        ))}
-      </nav>
+          <div className="font-id">
+            <div className="font-title">
+              <h1 className="font-name" id="font-name" tabIndex={-1}>{fontData.familyName}</h1>
+              {currentMeta && (
+                <button type="button" className={`icon-btn star${familyStarred ? ' is-on' : ''}`} aria-pressed={familyStarred} aria-label={`Star ${superFamilyName(currentMeta)}`} onClick={toggleStar}>
+                  <Icon name="star" />
+                </button>
+              )}
+              {currentMeta && effectiveCategory && (
+                <button
+                  type="button" className="btn cat-pill" aria-haspopup="menu" aria-expanded={!!catAnchor}
+                  aria-label={`Set category, now ${CAT_LABELS[effectiveCategory].long}`} data-testid="analyze-category-badge"
+                  onClick={(e) => setCatAnchor(e.currentTarget)}
+                >
+                  <span className="cat-dot" style={{ '--c': CAT_COLOR[effectiveCategory] } as CSSProperties} />
+                  {CAT_LABELS[effectiveCategory].long}
+                  <Icon name="chev" />
+                </button>
+              )}
+            </div>
+            <p className="font-meta">
+              {fontData.styleName}<span className="sep" aria-hidden="true">·</span>
+              <span className="mono">{fontData.glyphCount}</span> glyphs<span className="sep" aria-hidden="true">·</span>
+              <span className="mono">{fontData.unitsPerEm}</span> UPM
+              {currentMeta && <><span className="sep" aria-hidden="true">·</span>{currentMeta.source === 'google' ? 'Google Fonts' : 'Local'}</>}
+            </p>
+          </div>
+          {currentMeta && <FamilyNav members={familyMembers} current={currentMeta} onOpen={handleFamilyNav} />}
+          <div className="head-actions">
+            <button type="button" className="btn" onClick={handleExportJSON} disabled={!analysis}>Export JSON</button>
+            <button type="button" className="btn" onClick={handleExportImage} disabled={!analysis || glyphs}>Export Image</button>
+            {!IS_STATIC && currentMeta && (
+              <LocalFontActions font={currentMeta} onChanged={() => setReloadTick((n) => n + 1)} onRemoved={() => { writeLastFont(null); navigate('/'); }} />
+            )}
+          </div>
+        </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        <div className={`flex-1 ${activeTab === 'glyphs' ? '' : 'p-4'}`}>
-          {analyzing ? (
-            <div className="flex h-full items-center justify-center">
-              <div className="flex items-center gap-3">
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-600 border-t-blue-400" />
-                <span className="text-neutral-400">Analyzing font...</span>
+        <SubTabs tabs={tabs} active={activeTab} onSelect={setActiveTab} />
+
+        <div className={`analysis${glyphs ? ' no-side' : ''}`}>
+          <div className={`stage${glyphs ? ' is-flush' : ''}`}>
+            <div className="panel" role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
+              <div className="canvas">
+                {analyzing
+                  ? <div className="loading-state"><span className="spinner" aria-hidden="true" />Analyzing font…</div>
+                  : <AnalysisPanel tab={activeTab} fontData={fontData} fontId={fontId} analysis={analysis} canvasRef={canvasRef} />}
               </div>
             </div>
-          ) : (
-            <div className="h-full">
-              {activeTab === 'contrast' && (
-                <ContrastView
-                  fontData={fontData}
-                  contrastLower={analysis?.contrastLower ?? null}
-                  contrastUpper={analysis?.contrastUpper ?? null}
-                  xHeight={analysis?.xHeight}
-                  canvasRef={canvasRef}
-                />
-              )}
-              {activeTab === 'xheight' && (
-                <XHeightView
-                  fontData={fontData}
-                  result={analysis?.xHeight ?? null}
-                  canvasRef={canvasRef}
-                />
-              )}
-              {activeTab === 'proportions' && (
-                <ProportionsView
-                  fontData={fontData}
-                  result={analysis?.proportions ?? null}
-                  canvasRef={canvasRef}
-                />
-              )}
-              {activeTab === 'weight' && (
-                <WeightView
-                  fontData={fontData}
-                  result={analysis?.weight ?? null}
-                  canvasRef={canvasRef}
-                />
-              )}
-              {activeTab === 'spacing' && (
-                <SpacingView
-                  fontData={fontData}
-                  result={analysis?.spacing ?? null}
-                  canvasRef={canvasRef}
-                />
-              )}
-              {activeTab === 'glyphs' && (
-                <GlyphsView fontData={fontData} fontId={fontId!} />
-              )}
-            </div>
+          </div>
+          {!glyphs && (
+            <AnalysisSide
+              stats={summaryStats} fontData={fontData} filePath={IS_STATIC ? undefined : currentMeta?.filePath}
+              axes={variableAxes} axisValues={axisValues} setAxisValues={setAxisValues} previewFamily={previewFontFamily}
+              features={otfFeatures} rawMeta={rawMeta}
+            />
           )}
         </div>
-
-        <aside className={`w-56 overflow-y-auto border-l border-neutral-800 p-4 ${activeTab === 'glyphs' ? 'hidden' : ''}`}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-400">
-            Results
-          </h2>
-          {summaryStats.length > 0 ? (
-            <dl className="space-y-3">
-              {summaryStats.map((stat) => (
-                <div key={stat.label}>
-                  <dt className="text-xs text-neutral-400">{stat.label}</dt>
-                  <dd className="text-sm font-medium text-neutral-200">
-                    {stat.value}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          ) : (
-            <p className="text-xs text-neutral-500">No data available</p>
-          )}
-
-          <div className="mt-6 border-t border-neutral-800 pt-4">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-400">
-              Font Info
-            </h3>
-            <dl className="space-y-2">
-              <div>
-                <dt className="text-xs text-neutral-400">Family</dt>
-                <dd className="text-sm text-neutral-300">{fontData.familyName}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-neutral-400">Style</dt>
-                <dd className="text-sm text-neutral-300">{fontData.styleName}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-neutral-400">UPM</dt>
-                <dd className="text-sm text-neutral-300">{fontData.unitsPerEm}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-neutral-400">Ascender</dt>
-                <dd className="text-sm text-neutral-300">{fontData.ascender}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-neutral-400">Descender</dt>
-                <dd className="text-sm text-neutral-300">{fontData.descender}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-neutral-400">Glyphs</dt>
-                <dd className="text-sm text-neutral-300">{fontData.glyphCount}</dd>
-              </div>
-            </dl>
-          </div>
-
-          {variableAxes.length > 0 && (
-            <div className="mt-6 border-t border-neutral-800 pt-4">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-400">
-                Variable Axes
-              </h3>
-              <dl className="space-y-2">
-                {variableAxes.map((axis) => {
-                  const info = getAxisInfo(axis.tag, axis.name);
-                  return (
-                    <div key={axis.tag}>
-                      <dt className="flex items-center gap-1 text-xs text-neutral-400">
-                        {info.name} <span className="font-mono text-neutral-600">({axis.tag})</span>
-                        <AnalyzeAxisInfoButton tag={axis.tag} name={axis.name} />
-                      </dt>
-                      <dd className="text-sm text-neutral-300">
-                        {axis.minValue} – {axis.maxValue} (default: {axis.defaultValue})
-                      </dd>
-                    </div>
-                  );
-                })}
-              </dl>
-            </div>
-          )}
-
-          {otfFeatures.length > 0 && (
-            <div className="mt-6 border-t border-neutral-800 pt-4">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-400">
-                OpenType Features
-              </h3>
-              <div className="flex flex-wrap gap-1.5">
-                {otfFeatures.map((tag) => (
-                  <span
-                    key={tag}
-                    className="rounded bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-300"
-                    title={OTF_FEATURE_NAMES[tag] ?? tag}
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-              <p className="mt-2 text-xs text-neutral-600">
-                {otfFeatures.length} feature{otfFeatures.length !== 1 ? 's' : ''}
-              </p>
-            </div>
-          )}
-
-          {rawMeta.length > 0 && (
-            <div className="mt-6 border-t border-neutral-800 pt-4">
-              <button
-                onClick={() => setShowRawMeta((v) => !v)}
-                className="mb-2 flex w-full items-center justify-between text-xs font-semibold uppercase tracking-wider text-neutral-400 hover:text-neutral-300"
-              >
-                <span>Raw Metadata</span>
-                <span className="text-neutral-600">{showRawMeta ? '▾' : '▸'}</span>
-              </button>
-              {showRawMeta && rawMeta.map((section) => (
-                <div key={section.title} className="mb-3">
-                  <h4 className="mb-1.5 text-xs font-medium text-neutral-500">{section.title}</h4>
-                  <dl className="space-y-1">
-                    {section.entries.map((entry) => (
-                      <div key={entry.label} className="flex gap-2">
-                        <dt className="shrink-0 text-xs text-neutral-600">{entry.label}</dt>
-                        <dd className="min-w-0 break-all text-xs text-neutral-400">{entry.value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </div>
-              ))}
-            </div>
-          )}
-        </aside>
-      </div>
+      </section>
+      {catAnchor && (
+        <CategoryMenu anchor={catAnchor} title="Set category · whole family" current={effectiveCategory ?? undefined} onPick={handleCategoryOverride} onClose={() => setCatAnchor(null)} />
+      )}
     </div>
   );
+}
+
+function AnalysisPanel({ tab, fontData, fontId, analysis, canvasRef }: {
+  tab: AnalysisTab;
+  fontData: FontData;
+  fontId?: string;
+  analysis: FullAnalysis | null;
+  canvasRef: RefObject<HTMLCanvasElement | null>;
+}) {
+  switch (tab) {
+    case 'contrast':
+      return <ContrastView fontData={fontData} contrastLower={analysis?.contrastLower ?? null} contrastUpper={analysis?.contrastUpper ?? null} xHeight={analysis?.xHeight} canvasRef={canvasRef} />;
+    case 'xheight':
+      return <XHeightView fontData={fontData} result={analysis?.xHeight ?? null} canvasRef={canvasRef} />;
+    case 'proportions':
+      return <ProportionsView fontData={fontData} result={analysis?.proportions ?? null} canvasRef={canvasRef} />;
+    case 'weight':
+      return <WeightView fontData={fontData} result={analysis?.weight ?? null} canvasRef={canvasRef} />;
+    case 'spacing':
+      return <SpacingView fontData={fontData} result={analysis?.spacing ?? null} canvasRef={canvasRef} />;
+    case 'glyphs':
+      return fontId ? <GlyphsView fontData={fontData} fontId={fontId} /> : null;
+  }
 }
