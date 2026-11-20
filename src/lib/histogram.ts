@@ -19,3 +19,13 @@ export function histogramPath(counts: number[], w: number, h: number): string {
   const pts = counts.map((c, i) => `L${(i * step).toFixed(1)},${(h - (c / top) * (h - 2)).toFixed(1)}`).join('');
   return `M0,${h}${pts}L${w},${h}Z`;
 }
+
+/**
+ * Moves a slider value to `min` or `max` when it is less than half a `step` from it.
+ * A range input rounds to `min + k × step`, and float errors can stop it just inside the ends.
+ */
+export function snapToExtent(v: number, min: number, max: number, step: number): number {
+  if (v >= max - step / 2) return max;
+  if (v <= min + step / 2) return min;
+  return v;
+}

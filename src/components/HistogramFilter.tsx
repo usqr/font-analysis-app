@@ -1,5 +1,5 @@
 import { useId, useMemo, type CSSProperties } from 'react';
-import { binValues, histogramPath } from '../lib/histogram';
+import { binValues, histogramPath, snapToExtent } from '../lib/histogram';
 import type { Range } from '../lib/libraryFilters';
 
 const W = 240;
@@ -26,7 +26,8 @@ export function HistogramFilter({ label, values, extent, range, onChange }: {
   const b = (range[1] - min) / span;
   const step = span / 100;
 
-  const set = (which: 0 | 1, v: number) => {
+  const set = (which: 0 | 1, raw: number) => {
+    const v = snapToExtent(raw, min, max, step);
     const next: Range = which === 0 ? [Math.min(v, range[1]), range[1]] : [range[0], Math.max(v, range[0])];
     onChange(next);
   };
