@@ -43,6 +43,12 @@ npm run dev          # Vite :5173 + Express API :3001 (concurrently)
 
 **Gotcha:** static weight/slant swaps load a new font file asynchronously. Poll until the rendered `fontFamily` changes.
 
+## Follow-up work (TODO, 2026-11-20)
+
+- [ ] Split the components that are longer than the 40-line limit. AnalyzeView is done (`3fb2378`). Still open: `GlyphsView.tsx` (378 lines), `LibraryView.tsx` (273), `library/FamilyTile.tsx` (257), `ContrastView.tsx` (229).
+- [ ] Remove the 33 old `no-explicit-any` lint errors (`server/`, `GlyphsView.tsx`, `lib/api.ts`, `lib/otfFeatures.ts`, `types/opentype.d.ts`, e2e specs).
+- [ ] `e2e/contrast-debug.spec.ts` and `e2e/stroke-diagnosis.spec.ts` open `localhost:5175`, so they fail. Use the `baseURL` (5173) of the Playwright config.
+
 ## Conventions
 
 Conventional commits (`feat:`, `fix:`, `chore:`, …).
