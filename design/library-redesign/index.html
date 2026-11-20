@@ -1,0 +1,1523 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Library · Font Analyzer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..600&family=Geist+Mono:wght@400..500&display=swap">
+<style>
+/* OD-LAYOUT-PRIMITIVES v1 — structure only: display, flex/grid, overflow, wrapping, ratio, geometry.
+   Put this @layer first; product CSS outside the layer wins ordinary layout rules.
+   Native hidden and closed-dialog states take precedence over component display rules. */
+@layer od-layout {
+  [hidden]:not([hidden="until-found" i]) { display: none !important; }
+  dialog:not([open]) { display: none !important; }
+
+  :where(.od-stack,.od-row,.od-row-top,.od-cluster,.od-grid,.od-field,.od-stat,.od-cell,.od-tile) > :where(*) { min-width: 0; }
+
+  .od-stack   { display: flex; flex-direction: column; gap: var(--od-gap, 8px); }
+  .od-row     { display: flex; align-items: center; gap: var(--od-gap, 8px); }
+  .od-row-top { display: flex; align-items: flex-start; gap: var(--od-gap, 8px); }
+  .od-cluster { display: flex; flex-wrap: wrap; align-items: center; gap: var(--od-gap, 8px); }
+  .od-fill    { flex: 1 1 0; min-width: 0; }
+  .od-fixed   { flex: none; }
+  .od-grid    { display: grid; gap: var(--od-gap, 12px); grid-template-columns: repeat(var(--od-cols, 3), minmax(0, 1fr)); }
+
+  .od-stat, .od-field, .od-cell { display: grid; gap: var(--od-gap, 2px); }
+  :where(.od-stat,.od-field,.od-cell) > :where(*) { display: block; }
+  .od-tile { display: grid; grid-template-rows: auto 1fr; }
+  :where(.od-tile) > :where(*) { display: block; }
+
+  .od-media { display: block; width: 100%; height: auto; aspect-ratio: var(--od-ratio, auto); }
+  .od-media-cover { object-fit: cover; }
+
+  .od-icon { display: inline-block; inline-size: var(--od-icon-size, 1em); block-size: var(--od-icon-size, 1em); flex: none; }
+
+  .od-truncate { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .od-clamp-2, .od-clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .od-clamp-2 { -webkit-line-clamp: 2; }
+  .od-clamp-3 { -webkit-line-clamp: 3; }
+  .od-lines-2 { min-height: calc(2 * 1.4em); }
+  .od-nowrap  { white-space: nowrap; }
+  .od-keep    { word-break: keep-all; overflow-wrap: anywhere; }
+
+  .od-screen { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; }
+  .od-scroll { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+
+  .od-rail { display: flex; gap: var(--od-gap, 8px); overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+             padding-inline: var(--od-rail-pad, 16px); scroll-padding-inline: var(--od-rail-pad, 16px); }
+  .od-rail::-webkit-scrollbar { display: none; }
+  :where(.od-rail) > :where(*) { flex: none; scroll-snap-align: start; }
+  :where(.od-rail) > :where(:last-child) { margin-inline-end: var(--od-rail-pad, 16px); }
+
+  .od-spacer { flex: none; visibility: hidden; pointer-events: none; }
+  .od-touch  { min-width: 44px; min-height: 44px; }
+}
+:root [hidden]:where(:not([hidden="until-found" i])) { display: none; }
+/* /OD-LAYOUT-PRIMITIVES v1 */
+
+/* ───────────── Design tokens (map 1:1 to Tailwind 4 @theme) ───────────── */
+:root {
+  color-scheme: dark;
+
+  /* surfaces — neutral near-black, no hue cast */
+  --bg: #0b0c0e;
+  --surface-1: #111215;
+  --surface-2: #17181c;
+  --surface-3: #1e2025;
+  --surface-4: #2a2d34;
+  --border: #22242a;
+  --border-strong: #31343b;
+
+  /* text */
+  --text: #e6e7ea;
+  --text-muted: #9b9fa8;
+  --text-faint: #6c7079; /* decorative ticks only — below 4.5:1 */
+
+  /* single restrained accent: interactive state only */
+  --accent: #8ea2f0;
+  --accent-line: rgba(142, 162, 240, 0.45);
+  --accent-soft: rgba(142, 162, 240, 0.14);
+  --accent-fill: #3f58c8;
+  --accent-fill-hover: #4a64d6;
+  --on-accent: #ffffff;
+
+  --star: #e3b955;
+
+  /* category hues — muted, used only as small dots */
+  --cat-sans: #7fae93;
+  --cat-serif: #c99486;
+  --cat-display: #a993cc;
+  --cat-script: #c9ac6e;
+  --cat-mono: #6fadb3;
+  --cat-slab: #a7a58a;
+  --cat-none: #4a4d55;
+
+  /* type */
+  --font-ui: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --fs-xs: 12px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-specimen: 56px;
+
+  /* spacing — 4px grid */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* shape */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-pill: 999px;
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+  /* motion */
+  --dur-in: 200ms;
+  --dur-out: 140ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+
+  /* layout */
+  --nav-h: 48px;
+  --sidebar-w: 288px;
+  --tile-min: 172px;
+  --ctl-h: 24px;
+  --head-h: 105px;        /* measured at runtime from .app-head */
+  --meta-h: 18px;         /* tile meta line: 12px × 1.5 */
+  --panel-reserve: 192px; /* room below the last grid row for the hover panel */
+}
+
+/* ───────────── Base ───────────── */
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font: var(--fs-md)/1.5 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* ───────────── Buttons & controls ───────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  height: 32px; padding: 0 var(--sp-3);
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--text);
+  font-size: var(--fs-md); font-weight: 500; white-space: nowrap;
+}
+.btn:hover { background: var(--surface-3); }
+.btn[aria-pressed="true"], .btn[aria-expanded="true"].is-toggle { background: var(--accent-soft); border-color: var(--accent-line); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--on-accent); }
+.btn-primary:hover { background: var(--accent-fill-hover); }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--text-muted); }
+.btn-ghost:hover { background: var(--surface-3); color: var(--text); }
+.btn-sm { height: 28px; padding: 0 var(--sp-2); font-size: var(--fs-xs); }
+.badge {
+  display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: var(--r-pill); background: var(--accent-fill); color: var(--on-accent);
+  font-size: var(--fs-xs); font-weight: 600;
+}
+.icon-btn {
+  display: inline-grid; place-items: center; width: 28px; height: 28px;
+  border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-muted);
+}
+.icon-btn:hover { background: var(--surface-3); color: var(--text); }
+
+/* segmented control (radio-based or button-based) */
+.seg {
+  display: inline-flex; padding: 2px; gap: 2px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-sm);
+}
+.seg label { position: relative; display: block; }
+.seg input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.seg span, .seg button {
+  display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 var(--sp-3);
+  border: 0; border-radius: 3px; background: transparent; color: var(--text-muted);
+  font-size: var(--fs-md); white-space: nowrap;
+}
+.seg button { padding: 0 var(--sp-2); }
+.seg span:hover, .seg button:hover { color: var(--text); }
+.seg input:checked + span, .seg button[aria-pressed="true"] { background: var(--surface-4); color: var(--text); }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* filter chips (checkbox-based) */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { position: relative; display: block; }
+.chip input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.chip input + span {
+  display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 var(--sp-3);
+  border: 1px solid var(--border-strong); border-radius: var(--r-pill);
+  color: var(--text-muted); font-size: var(--fs-md); white-space: nowrap;
+}
+.chip-sm input + span { height: 24px; padding: 0 10px; font-size: var(--fs-xs); }
+.chip input + span:hover { color: var(--text); border-color: var(--surface-4); }
+.chip input:checked + span { background: var(--accent-soft); border-color: var(--accent-line); color: var(--text); }
+.chip input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.cat-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--cat-none)); flex: none; }
+
+/* sliders */
+.slider {
+  --p: 50%;
+  appearance: none; -webkit-appearance: none;
+  width: 100%; height: var(--ctl-h); margin: 0; background: transparent;
+}
+.slider::-webkit-slider-runnable-track { height: 2px; border-radius: 2px; background: linear-gradient(to right, var(--text-muted) var(--p), var(--surface-4) var(--p)); }
+.slider::-moz-range-track { height: 2px; border-radius: 2px; background: linear-gradient(to right, var(--text-muted) var(--p), var(--surface-4) var(--p)); }
+.slider::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -5px; border: 0; border-radius: 50%; background: var(--text); }
+.slider::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: var(--text); }
+.slider:focus-visible { outline: none; }
+.slider:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--accent); }
+.slider:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 3px var(--accent); }
+
+.select {
+  height: var(--ctl-h); padding: 0 4px; min-width: 0;
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  background: var(--surface-1); color: var(--text); font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+}
+.num {
+  width: 100%; height: 30px; padding: 0 var(--sp-2);
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  background: var(--surface-1); color: var(--text); font-family: var(--font-mono); font-size: var(--fs-md);
+}
+.num::placeholder { color: var(--text-muted); }
+
+/* ───────────── Sticky app head (nav + toolbar) ───────────── */
+.app-head { position: sticky; top: 0; z-index: 20; background: var(--bg); }
+
+/* ───────────── Top nav ───────────── */
+.topnav {
+  display: flex; align-items: center; gap: var(--sp-6);
+  height: var(--nav-h); padding: 0 var(--sp-5);
+  border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 600; font-size: var(--fs-md); letter-spacing: -0.01em; }
+.tabs { display: flex; gap: var(--sp-1); }
+.tab {
+  display: flex; align-items: center; height: 30px; padding: 0 var(--sp-3);
+  border-radius: var(--r-sm); color: var(--text-muted); text-decoration: none; font-size: var(--fs-md);
+}
+.tab:hover { color: var(--text); background: var(--surface-2); }
+.tab[aria-current="page"] { color: var(--text); background: var(--surface-3); }
+
+/* ───────────── Toolbar ───────────── */
+.toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3);
+  padding: var(--sp-3) var(--sp-5);
+  border-bottom: 1px solid var(--border);
+}
+.search {
+  display: flex; align-items: center; gap: var(--sp-2);
+  width: min(320px, 100%); height: 32px; padding: 0 var(--sp-3);
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm); background: var(--surface-1);
+  color: var(--text-muted);
+}
+.search:focus-within { border-color: var(--accent-line); }
+.search input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; outline: none; color: var(--text); font-size: var(--fs-md); }
+.search input::placeholder { color: var(--text-muted); }
+.count { margin: 0 0 0 auto; color: var(--text-muted); font-size: var(--fs-md); white-space: nowrap; }
+.count b { color: var(--text); font-weight: 500; }
+
+/* ───────────── Workspace ───────────── */
+.workspace { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); align-items: start; }
+.workspace.no-sidebar { grid-template-columns: minmax(0, 1fr); }
+
+.sidebar {
+  position: sticky; top: var(--head-h); height: calc(100dvh - var(--head-h));
+  overflow-y: auto; overscroll-behavior: contain;
+  border-right: 1px solid var(--border);
+  padding: var(--sp-4) var(--sp-5) var(--sp-8);
+  display: flex; flex-direction: column; gap: var(--sp-6);
+}
+.side-head { display: flex; align-items: center; justify-content: space-between; }
+.side-title { margin: 0; font-size: var(--fs-md); font-weight: 600; }
+.group { display: flex; flex-direction: column; gap: var(--sp-2); }
+.group > .seg { align-self: flex-start; }
+.group-title { display: flex; align-items: center; gap: var(--sp-1); margin: 0; font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); }
+.row-gap { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
+.star-toggle .od-icon { --od-icon-size: 14px; }
+.star-toggle[aria-pressed="true"] .od-icon { fill: var(--star); stroke: var(--star); }
+
+.info-btn { width: 20px; height: 20px; color: var(--text-muted); }
+.info-btn .od-icon { --od-icon-size: 14px; }
+
+/* advanced details */
+.adv { border-top: 1px solid var(--border); padding-top: var(--sp-4); }
+.adv > summary {
+  display: flex; align-items: center; gap: var(--sp-2);
+  list-style: none; cursor: pointer; font-size: var(--fs-md); font-weight: 600;
+  border-radius: var(--r-sm);
+}
+.adv > summary::-webkit-details-marker { display: none; }
+.adv > summary .od-icon { --od-icon-size: 16px; color: var(--text-muted); transition: transform var(--dur-in) var(--ease-out); }
+.adv[open] > summary .od-icon { transform: rotate(180deg); }
+.adv-body { display: flex; flex-direction: column; gap: var(--sp-5); padding-top: var(--sp-4); }
+
+/* histogram range */
+.hist { display: grid; gap: var(--sp-1); }
+.hist-head { display: flex; justify-content: space-between; align-items: baseline; }
+.hist-label { font-size: var(--fs-md); font-weight: 500; }
+.hist-val { font-size: var(--fs-xs); color: var(--text-muted); }
+.hist-svg { display: block; width: 100%; height: 44px; }
+.hist-bg { fill: var(--surface-3); }
+.hist-fg { fill: var(--text-muted); opacity: 0.55; }
+.range2 { --lo: 0; --hi: 100; position: relative; height: 16px; margin-top: -6px; }
+.range2-track { position: absolute; left: 0; right: 0; top: 7px; height: 2px; background: var(--surface-4); border-radius: 2px; }
+.range2-fill { position: absolute; top: 0; bottom: 0; left: calc(var(--lo) * 1%); right: calc((100 - var(--hi)) * 1%); background: var(--accent); }
+.range2 input {
+  position: absolute; left: 0; top: 0; width: 100%; height: 16px; margin: 0;
+  appearance: none; -webkit-appearance: none; background: transparent; pointer-events: none;
+}
+.range2 input::-webkit-slider-runnable-track { background: transparent; height: 16px; }
+.range2 input::-moz-range-track { background: transparent; }
+.range2 input::-webkit-slider-thumb { -webkit-appearance: none; pointer-events: auto; width: 12px; height: 12px; margin-top: 2px; border: 2px solid var(--accent); border-radius: 50%; background: var(--surface-1); cursor: grab; }
+.range2 input::-moz-range-thumb { pointer-events: auto; width: 10px; height: 10px; border: 2px solid var(--accent); border-radius: 50%; background: var(--surface-1); cursor: grab; }
+.range2 input:focus-visible { outline: none; }
+.range2 input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--accent-line); }
+.range2 input:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 3px var(--accent-line); }
+.hist-scale { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--text-muted); }
+
+.minmax { display: grid; grid-template-columns: 1fr auto 1fr; gap: var(--sp-2); align-items: end; }
+.minmax label { display: grid; gap: 2px; font-size: var(--fs-xs); color: var(--text-muted); }
+.minmax .dash { padding-bottom: 6px; color: var(--text-muted); }
+.check { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-md); cursor: pointer; }
+.check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent-fill); }
+
+/* ───────────── Content column ───────────── */
+.content { display: flex; flex-direction: column; min-width: 0; min-height: calc(100dvh - var(--head-h)); }
+.active-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: var(--sp-3) var(--sp-5) 0;
+}
+.active-label { font-size: var(--fs-xs); color: var(--text-muted); margin-right: var(--sp-1); }
+.fchip {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 6px 0 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-pill);
+  background: var(--surface-2); color: var(--text); font-size: var(--fs-xs); white-space: nowrap;
+}
+.fchip:hover { border-color: var(--accent-line); }
+.fchip .od-icon { --od-icon-size: 14px; color: var(--text-muted); }
+
+/* bottom padding reserves room for the hover panel of the last row */
+.grid-scroll { flex: 1; padding: var(--sp-4) var(--sp-5) var(--panel-reserve); }
+.grid {
+  display: grid; gap: var(--sp-3);
+  grid-template-columns: repeat(auto-fill, minmax(var(--tile-min), 1fr));
+}
+.empty { padding: 64px var(--sp-4); text-align: center; color: var(--text-muted); }
+.empty p { margin: 0 0 var(--sp-3); }
+
+/* ───────────── Tile ───────────── */
+.tile {
+  position: relative; display: grid; grid-template-rows: auto 1fr;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-md);
+  transition: border-color var(--dur-in) var(--ease-out), box-shadow var(--dur-in) var(--ease-out);
+}
+.tile.is-selected { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.tile-top { display: flex; align-items: center; gap: var(--sp-1); height: 32px; padding: var(--sp-1) var(--sp-2) 0 var(--sp-1); }
+.tile-top .grow { flex: 1; }
+.star .od-icon { --od-icon-size: 16px; }
+.star.is-on { color: var(--star); }
+.star.is-on .od-icon { fill: var(--star); }
+.star:not(.is-on) { opacity: 0; }
+.bulk-check { width: 16px; height: 16px; margin: 6px; accent-color: var(--accent-fill); display: none; }
+body.bulk .bulk-check { display: block; }
+body.bulk .star { display: none; }
+.cmp-flag { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); font-size: var(--fs-xs); font-weight: 600; }
+.cmp-flag .od-icon { --od-icon-size: 14px; }
+.src { font-size: var(--fs-xs); color: var(--text-muted); }
+
+.tile-open {
+  display: flex; flex-direction: column; align-items: center; gap: var(--sp-1);
+  min-width: 0; padding: 0 var(--sp-2) var(--sp-3);
+  border: 0; background: transparent; color: inherit; text-align: center;
+}
+.tile-open:focus-visible { outline-offset: -2px; border-radius: var(--r-md); }
+.specimen {
+  display: flex; align-items: center; justify-content: center;
+  height: 104px; width: 100%; overflow: hidden;
+  font-size: var(--fs-specimen); line-height: 1; white-space: nowrap; color: var(--text);
+  transition: transform var(--dur-in) var(--ease-out);
+}
+.tile-text { display: grid; gap: 2px; justify-items: center; width: 100%; min-width: 0; }
+.tile-name { font-size: var(--fs-md); font-weight: 500; }
+.tile-meta {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  height: var(--meta-h); max-width: 100%; overflow: hidden; white-space: nowrap;
+  font-size: var(--fs-xs); line-height: var(--meta-h); color: var(--text-muted);
+  transition: opacity var(--dur-out) var(--ease-in);
+}
+.tile-meta .sep { opacity: 0.6; }
+.ast { color: var(--text); margin-left: 1px; }
+
+/* Open state: hover, keyboard focus inside, or a menu opened from this tile.
+   The tile keeps its grid size; the panel replaces the meta line and drops
+   below the tile as an overlay above its neighbors. */
+.tile:is(:hover, :focus-within, .is-active) {
+  z-index: 5;
+  border-color: var(--border-strong);
+  border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+}
+.tile:is(:hover, :focus-within, .is-active) .star { opacity: 1; }
+.tile:is(:hover, :focus-within, .is-active) .specimen { transform: translateY(-4px) scale(0.92); }
+.tile:is(:hover, :focus-within, .is-active) .tile-meta { opacity: 0; }
+
+.tile-panel {
+  position: absolute; left: -1px; right: -1px;
+  top: calc(100% - var(--sp-3) - var(--meta-h));
+  display: grid; gap: var(--sp-3); padding: var(--sp-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong); border-top-color: var(--border);
+  border-radius: 0 0 var(--r-md) var(--r-md);
+  box-shadow: 0 20px 32px -12px rgba(0, 0, 0, 0.7);
+  opacity: 0; transform: translateY(-4px); pointer-events: none;
+  transition: opacity var(--dur-out) var(--ease-in), transform var(--dur-out) var(--ease-in);
+}
+.tile:is(:hover, :focus-within, .is-active) .tile-panel {
+  opacity: 1; transform: none; pointer-events: auto;
+  transition: opacity var(--dur-in) var(--ease-out), transform var(--dur-in) var(--ease-out);
+}
+
+/* one control per block: label line + control line */
+.ctl { display: grid; gap: 2px; }
+.ctl-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); min-height: 24px; }
+.ctl-label { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-muted); }
+.ctl-val { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ctl-head .select { margin-left: auto; }
+.ctl .select.full { width: 100%; height: 28px; }
+.ctl .axis-sel { font-family: var(--font-ui); margin-bottom: var(--sp-1); }
+.ticks { display: flex; justify-content: space-between; padding: 0 5px; margin-top: -6px; }
+.ticks span { width: 2px; height: 4px; border-radius: 1px; background: var(--surface-4); }
+.ctl-actions { display: flex; gap: var(--sp-2); container-type: inline-size; }
+.ctl-actions .mini-btn { flex: 1 1 auto; min-width: max-content; }
+.mini-btn.cmp-btn { gap: 4px; }
+.cmp-btn .cmp-n { flex: none; }
+/* the label hides when the row cannot hold it without a clip; aria-label and title keep the name */
+@container (max-width: 171.98px) { .ital-btn + .cmp-btn .cmp-label { display: none; } }
+@container (max-width: 110px) { .cmp-btn .cmp-label { display: none; } }
+.mini-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 28px; padding: 0 6px; flex: 1 1 0; min-width: 0;
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--text-muted); font-size: var(--fs-xs); white-space: nowrap;
+}
+.mini-btn:hover { color: var(--text); background: var(--surface-3); }
+.mini-btn[aria-pressed="true"], .mini-btn.has-count { color: var(--text); background: var(--accent-soft); border-color: var(--accent-line); }
+.mini-btn .od-icon { --od-icon-size: 14px; }
+.ital-btn { font-style: italic; }
+.cmp-n { min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--r-pill); background: var(--accent-fill); color: var(--on-accent); font-size: var(--fs-xs); line-height: 16px; font-weight: 600; font-style: normal; }
+.cmp-n:empty { display: none; }
+.cat-btn { width: 100%; justify-content: flex-start; }
+.cat-btn > span:not(.cat-dot) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.cat-btn .od-icon { --od-icon-size: 14px; margin-left: auto; }
+
+/* list view */
+.grid.is-list { grid-template-columns: minmax(0, 1fr); gap: var(--sp-1); }
+.is-list .tile { grid-template-columns: 40px minmax(0, 1fr) auto; grid-template-rows: auto; align-items: center; }
+.is-list .tile:is(:hover, :focus-within, .is-active) { border-radius: var(--r-md); z-index: auto; }
+.is-list .tile:is(:hover, :focus-within, .is-active) .specimen { transform: none; }
+.is-list .tile:is(:hover, :focus-within, .is-active) .tile-meta { opacity: 1; }
+.is-list .tile-top { height: auto; padding: 0 0 0 var(--sp-1); }
+.is-list .tile-top .grow, .is-list .tile-top .src { display: none; }
+.is-list .tile-open { flex-direction: row; justify-content: flex-start; gap: var(--sp-4); padding: var(--sp-1) var(--sp-3); }
+.is-list .specimen { height: 52px; width: 88px; font-size: 36px; }
+.is-list .tile-text { justify-items: start; }
+.is-list .tile-meta { justify-content: flex-start; }
+.is-list .tile-panel {
+  position: static; opacity: 1; transform: none; pointer-events: auto;
+  grid-template-columns: 160px 160px 140px 150px; align-items: end; gap: var(--sp-4);
+  border: 0; border-radius: 0; box-shadow: none; background: transparent; padding: var(--sp-2) var(--sp-3);
+}
+
+/* ───────────── Dock: bulk bar + compare tray ───────────── */
+.dock { position: sticky; bottom: 0; z-index: 15; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); padding: 0 var(--sp-5) var(--sp-4); }
+.dock:not(:has(> :not([hidden]))) { padding: 0; }
+.bar {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-4);
+  background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--r-lg);
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.35);
+  transition: opacity var(--dur-in) var(--ease-out), transform var(--dur-in) var(--ease-out);
+}
+@starting-style { .bar { opacity: 0; transform: translateY(8px); } }
+.bar-label { font-size: var(--fs-md); color: var(--text-muted); white-space: nowrap; }
+.bar-label b { color: var(--text); font-weight: 600; }
+.bar .grow { flex: 1; }
+.tray-chips { display: flex; gap: 6px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.tchip {
+  display: inline-flex; align-items: center; gap: 4px; flex: none; height: 28px; padding: 0 4px 0 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm); background: var(--surface-1);
+  font-size: var(--fs-xs); white-space: nowrap;
+}
+.tchip .icon-btn { width: 22px; height: 22px; }
+.tchip .od-icon { --od-icon-size: 12px; }
+
+/* ───────────── Popovers & menus ───────────── */
+.pop {
+  position: fixed; inset: auto; margin: 0;
+  min-width: 200px; max-width: 280px; padding: 6px;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--r-md); box-shadow: var(--shadow-pop);
+  font-size: var(--fs-md);
+  opacity: 1; transition: opacity var(--dur-in) var(--ease-out), display var(--dur-in) allow-discrete, overlay var(--dur-in) allow-discrete;
+}
+@starting-style { .pop:popover-open { opacity: 0; } }
+.pop-info { max-width: 260px; padding: var(--sp-3); color: var(--text-muted); line-height: 1.5; }
+.pop-info b { color: var(--text); font-weight: 500; }
+.menu-title { margin: 0; padding: 6px 8px 2px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); }
+.menu-sub { margin: 0; padding: 0 8px 6px; font-size: var(--fs-xs); color: var(--text-muted); }
+.menu-item {
+  display: flex; align-items: center; gap: var(--sp-2); width: 100%;
+  height: 30px; padding: 0 var(--sp-2); border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--text); text-align: left; font-size: var(--fs-md);
+}
+.menu-item:hover, .menu-item:focus-visible { background: var(--surface-3); outline: none; }
+.menu-item .od-icon { --od-icon-size: 14px; margin-left: auto; color: var(--accent); }
+.menu-sep { height: 1px; margin: 4px 2px; background: var(--border); }
+
+.wset { margin: 0; padding: 4px 8px 8px; border: 0; }
+.wset legend { padding: 0; margin-bottom: 6px; font-size: var(--fs-xs); color: var(--text-muted); }
+.wgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.wchk { position: relative; display: block; }
+.wchk input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.wchk span {
+  display: grid; place-items: center; height: 28px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-muted);
+}
+.wchk input:checked + span { background: var(--accent-soft); border-color: var(--accent-line); color: var(--text); }
+.wchk input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pop-foot { display: flex; justify-content: space-between; padding: 4px 4px 2px; border-top: 1px solid var(--border); margin-top: 2px; }
+
+/* toast */
+.toast {
+  position: fixed; top: calc(var(--head-h) + 12px); right: var(--sp-5); z-index: 30;
+  max-width: 320px; padding: var(--sp-2) var(--sp-4);
+  background: var(--surface-3); border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop); font-size: var(--fs-md);
+  opacity: 0; transform: translateY(-6px); pointer-events: none;
+  transition: opacity var(--dur-out) var(--ease-in), transform var(--dur-out) var(--ease-in);
+}
+.toast.is-on { opacity: 1; transform: none; transition: opacity var(--dur-in) var(--ease-out), transform var(--dur-in) var(--ease-out); }
+
+/* ───────────── Responsive & preferences ───────────── */
+@media (hover: none) {
+  .tile-panel { position: static; opacity: 1; transform: none; pointer-events: auto; border: 0; border-top: 1px solid var(--border); border-radius: 0; box-shadow: none; }
+  .tile .tile-meta { opacity: 1 !important; }
+  .star:not(.is-on) { opacity: 1; }
+  .tile .specimen { transform: none !important; }
+  .grid-scroll { padding-bottom: var(--sp-6); }
+}
+@media (max-width: 1024px) {
+  .is-list .tile-panel { grid-template-columns: repeat(2, 160px); }
+}
+@media (max-width: 900px) {
+  .workspace { grid-template-columns: minmax(0, 1fr); }
+  .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+  .content { min-height: 0; }
+  .is-list .tile { grid-template-columns: 40px minmax(0, 1fr); }
+  .is-list .tile-panel { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; padding: 0 var(--sp-3) var(--sp-3); }
+}
+@media (max-width: 600px) {
+  :root { --tile-min: 148px; }
+  .topnav, .toolbar { padding-inline: var(--sp-4); }
+  .grid-scroll, .active-bar { padding-inline: var(--sp-4); }
+  .dock { padding-inline: var(--sp-3); }
+  .count { margin-left: 0; width: 100%; white-space: normal; }
+  .search { width: 100%; order: -1; }
+  .bar { flex-wrap: wrap; }
+  .tray-chips { flex-basis: 100%; order: -1; }
+  .is-list .tile-panel { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0s !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="app-head" id="appHead">
+<header class="topnav">
+  <span class="brand">Font Analyzer</span>
+  <nav class="tabs" aria-label="Primary">
+    <a class="tab" href="index.html" aria-current="page">Library</a>
+    <a class="tab" href="analyze.html">Analyze</a>
+    <a class="tab" href="compare.html">Compare</a>
+  </nav>
+</header>
+
+<div class="toolbar">
+  <button class="btn is-toggle" id="filtersToggle" aria-expanded="true" aria-controls="sidebar">
+    <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+    Filters <span class="badge" id="filterBadge" hidden></span>
+  </button>
+  <label class="search">
+    <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>
+    <span class="sr">Search families</span>
+    <input type="search" id="search" placeholder="Search families…" autocomplete="off">
+  </label>
+  <div class="seg" role="group" aria-label="View">
+    <button type="button" data-view="list" aria-pressed="false" aria-label="List view">
+      <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14"/></svg>
+    </button>
+    <button type="button" data-view="grid" aria-pressed="true" aria-label="Grid view">
+      <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4.5" y="4.5" width="6" height="6" rx="1"/><rect x="13.5" y="4.5" width="6" height="6" rx="1"/><rect x="4.5" y="13.5" width="6" height="6" rx="1"/><rect x="13.5" y="13.5" width="6" height="6" rx="1"/></svg>
+    </button>
+  </div>
+  <button class="btn" id="bulkBtn" aria-pressed="false">Bulk Edit</button>
+  <p class="count" id="count" aria-live="polite"></p>
+</div>
+</div>
+
+<div class="workspace" id="workspace">
+  <aside class="sidebar" id="sidebar" aria-label="Filters">
+    <div class="side-head">
+      <h2 class="side-title">Filters</h2>
+      <button class="btn btn-ghost btn-sm" id="resetSide">Reset all</button>
+    </div>
+
+    <section class="group" aria-labelledby="g-show">
+      <h3 class="group-title" id="g-show">Show</h3>
+      <div class="row-gap">
+        <button class="btn btn-sm star-toggle" id="starredBtn" aria-pressed="false">
+          <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>
+          Starred
+        </button>
+        <div class="seg" role="radiogroup" aria-label="Font type">
+          <label><input type="radio" name="vf" value="all" checked><span>All</span></label>
+          <label><input type="radio" name="vf" value="var"><span>Variable</span></label>
+          <label><input type="radio" name="vf" value="static"><span>Static</span></label>
+        </div>
+      </div>
+    </section>
+
+    <section class="group" aria-labelledby="g-cat">
+      <h3 class="group-title" id="g-cat">Category</h3>
+      <div class="chips" id="catChips"></div>
+    </section>
+
+    <section class="group" aria-labelledby="g-styles">
+      <h3 class="group-title" id="g-styles">Styles in family</h3>
+      <div class="minmax">
+        <label>Min<input class="num" id="smin" type="number" min="1" value="1" inputmode="numeric"></label>
+        <span class="dash" aria-hidden="true">–</span>
+        <label>Max<input class="num" id="smax" type="number" min="1" placeholder="∞" inputmode="numeric"></label>
+      </div>
+    </section>
+
+    <section class="group" id="axesGroup" aria-labelledby="g-axes" hidden>
+      <h3 class="group-title" id="g-axes">Variable axes</h3>
+      <div class="minmax">
+        <label>Min<input class="num" id="amin" type="number" min="1" value="1" inputmode="numeric"></label>
+        <span class="dash" aria-hidden="true">–</span>
+        <label>Max<input class="num" id="amax" type="number" min="1" placeholder="∞" inputmode="numeric"></label>
+      </div>
+    </section>
+
+    <section class="group" aria-labelledby="g-tags">
+      <h3 class="group-title" id="g-tags">
+        Tags source
+        <button class="icon-btn info-btn" id="tagsInfoBtn" aria-label="About tag sources" aria-haspopup="dialog">
+          <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8v.01"/></svg>
+        </button>
+      </h3>
+      <div class="seg" role="radiogroup" aria-labelledby="g-tags">
+        <label><input type="radio" name="tags" value="meta"><span>File meta</span></label>
+        <label><input type="radio" name="tags" value="ext" checked><span>Extended</span></label>
+      </div>
+    </section>
+
+    <details class="adv" id="adv">
+      <summary>
+        Advanced filters <span class="badge" id="advBadge" hidden></span>
+        <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true" style="margin-left:auto"><path d="M6 9l6 6 6-6"/></svg>
+      </summary>
+      <div class="adv-body">
+        <div id="hists" class="adv-body" style="padding:0"></div>
+
+        <label class="check"><input type="checkbox" id="exLatin"> Exclude basic-Latin-only</label>
+
+        <section class="group" aria-labelledby="g-req">
+          <h3 class="group-title" id="g-req">Require scripts</h3>
+          <div class="chips" id="scriptChips"></div>
+        </section>
+      </div>
+    </details>
+  </aside>
+
+  <main class="content">
+    <div class="active-bar" id="activeBar" hidden></div>
+    <div class="grid-scroll">
+      <div class="grid" id="grid" aria-label="Font families"></div>
+    </div>
+    <div class="dock">
+      <div class="bar" id="bulkBar" role="region" aria-label="Bulk edit" hidden>
+        <span class="bar-label"><b id="selCount">0</b> selected</span>
+        <button class="btn btn-sm" id="selAll">Select all</button>
+        <button class="btn btn-sm" id="bulkCat" aria-haspopup="menu" disabled>Set category…</button>
+        <span class="grow"></span>
+        <button class="btn btn-primary btn-sm" id="bulkDone">Done</button>
+      </div>
+      <div class="bar" id="tray" role="region" aria-label="Compare tray" hidden>
+        <span class="bar-label"><b id="trayCount">0</b> to compare</span>
+        <div class="tray-chips" id="trayChips"></div>
+        <button class="btn btn-ghost btn-sm" id="trayClear">Clear</button>
+        <button class="btn btn-primary btn-sm" id="trayGo">Compare</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="pop pop-info" id="tagsInfo" popover role="dialog" aria-label="About tag sources">
+  <b>File meta</b> uses the category from the font file's own metadata.<br>
+  <b>Extended</b> adds tags from outline analysis of the “H” glyph. An asterisk (*) marks a category from that analysis.
+</div>
+<div class="pop" id="catMenu" popover role="menu" aria-label="Set category"></div>
+<div class="pop" id="cmpMenu" popover role="dialog" aria-label="Add styles to compare"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* ───────────── Data ───────────── */
+const CATS = {
+  serif:   { label: 'Serif',   filter: 'Serif' },
+  sans:    { label: 'Sans',    filter: 'Sans-Serif' },
+  mono:    { label: 'Mono',    filter: 'Monospace' },
+  display: { label: 'Display', filter: 'Display' },
+  script:  { label: 'Script',  filter: 'Script' },
+  slab:    { label: 'Slab',    filter: 'Slab' },
+};
+const CAT_ORDER = ['serif', 'sans', 'mono', 'display', 'script', 'slab'];
+const SCRIPTS = [
+  ['latx', 'Latin Extended'], ['cyrl', 'Cyrillic'], ['grek', 'Greek'], ['arab', 'Arabic'],
+  ['hebr', 'Hebrew'], ['deva', 'Devanagari'], ['beng', 'Bengali'], ['taml', 'Tamil'],
+  ['telu', 'Telugu'], ['thai', 'Thai'], ['geor', 'Georgian'], ['armn', 'Armenian'],
+  ['cjk', 'CJK'], ['hang', 'Hangul'], ['kana', 'Japanese Kana'], ['viet', 'Vietnamese'],
+];
+const WNAMES = { 100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black', 1000: 'ExtraBlack' };
+const TOTAL_LIBRARY = 3569;
+
+const AXIS_NAMES = {
+  wdth: 'Width', opsz: 'Optical size', GRAD: 'Grade', CASL: 'Casual', MONO: 'Monospace', CRSV: 'Cursive',
+  SOFT: 'Softness', WONK: 'Wonky', XOPQ: 'Thick stroke', YOPQ: 'Thin stroke', XTRA: 'Counter width',
+  YTUC: 'Y transparent UC', YTLC: 'Y transparent LC', YTAS: 'Ascender height', YTDE: 'Descender depth', YTFI: 'Figure height',
+};
+const axisName = (tag) => (AXIS_NAMES[tag] ? `${AXIS_NAMES[tag]} · ${tag}` : tag);
+const A = (tag, min, max, def, step) => ({ tag, min, max, def, step: step ?? (max - min > 10 ? 1 : 0.01) });
+
+const FONTS = [
+  { id: 'advent-pro', name: 'Advent Pro', meta: 'sans', ext: 'sans', vf: 1, ital: 'italic', axes: [A('wght', 100, 900, 400), A('wdth', 100, 200, 100)], n: 2, url: 'Advent+Pro:ital,wdth,wght@0,100..200,100..900;1,100..200,100..900', sc: ['latx', 'cyrl', 'grek'], star: 1 },
+  { id: 'alegreya', name: 'Alegreya', meta: 'serif', ext: 'serif', vf: 1, ital: 'italic', axes: [A('wght', 400, 900, 400)], n: 1, url: 'Alegreya:ital,wght@0,400..900;1,400..900', sc: ['latx', 'cyrl', 'grek', 'viet'] },
+  { id: 'alexandria', name: 'Alexandria', meta: null, ext: 'sans', vf: 1, axes: [A('wght', 100, 900, 400)], n: 1, url: 'Alexandria:wght@100..900', sc: ['latx', 'arab', 'viet'] },
+  { id: 'alkatra', name: 'Alkatra', meta: 'display', ext: 'display', vf: 1, axes: [A('wght', 400, 700, 400)], n: 1, url: 'Alkatra:wght@400..700', sc: ['latx', 'beng', 'deva'] },
+  { id: 'alumni-sans', name: 'Alumni Sans', meta: 'sans', ext: 'sans', vf: 1, ital: 'italic', axes: [A('wght', 100, 900, 400)], n: 1, url: 'Alumni+Sans:ital,wght@0,100..900;1,100..900', sc: ['latx', 'cyrl', 'viet'], narrow: 1 },
+  { id: 'anek-latin', name: 'Anek Latin', meta: 'sans', ext: 'sans', vf: 1, axes: [A('wght', 100, 800, 400), A('wdth', 75, 125, 100)], n: 2, url: 'Anek+Latin:wdth,wght@75..125,100..800', sc: ['latx', 'viet'], star: 1 },
+  { id: 'antonio', name: 'Antonio', meta: 'display', ext: 'sans', vf: 1, axes: [A('wght', 100, 700, 400)], n: 1, url: 'Antonio:wght@100..700', sc: ['latx', 'cyrl', 'grek'], narrow: 1 },
+  { id: 'arima', name: 'Arima', meta: 'display', ext: 'display', vf: 1, axes: [A('wght', 100, 700, 400)], n: 1, url: 'Arima:wght@100..700', sc: ['latx', 'grek', 'taml', 'viet'] },
+  { id: 'asap', name: 'Asap', meta: 'sans', ext: 'sans', vf: 1, ital: 'italic', axes: [A('wght', 100, 900, 400), A('wdth', 75, 125, 100)], n: 2, url: 'Asap:ital,wdth,wght@0,75..125,100..900;1,75..125,100..900', sc: ['latx', 'viet'] },
+  { id: 'atkinson-mono', name: 'Atkinson Hyperlegible Mono', meta: 'mono', ext: 'mono', vf: 1, ital: 'italic', axes: [A('wght', 200, 800, 400)], n: 1, url: 'Atkinson+Hyperlegible+Mono:ital,wght@0,200..800;1,200..800', sc: ['latx'], star: 1 },
+  { id: 'azeret-mono', name: 'Azeret Mono', meta: 'mono', ext: 'mono', vf: 1, ital: 'italic', axes: [A('wght', 100, 900, 400)], n: 1, url: 'Azeret+Mono:ital,wght@0,100..900;1,100..900', sc: ['latx'] },
+  { id: 'baloo-2', name: 'Baloo 2', meta: 'display', ext: 'sans', vf: 1, axes: [A('wght', 400, 800, 400)], n: 1, url: 'Baloo+2:wght@400..800', sc: ['latx', 'deva', 'viet'] },
+  { id: 'archivo', name: 'Archivo', meta: 'sans', ext: 'sans', vf: 1, ital: 'italic', axes: [A('wght', 100, 900, 400), A('wdth', 62, 125, 100)], n: 2, url: 'Archivo:ital,wdth,wght@0,62..125,100..900;1,62..125,100..900', sc: ['latx', 'viet'] },
+  { id: 'anybody', name: 'Anybody', meta: 'display', ext: 'display', vf: 1, ital: 'italic', axes: [A('wght', 100, 900, 400), A('wdth', 50, 150, 100)], n: 2, url: 'Anybody:ital,wdth,wght@0,50..150,100..900;1,50..150,100..900', sc: ['latx', 'viet'] },
+  { id: 'afacad', name: 'Afacad', meta: 'sans', ext: 'sans', vf: 1, ital: 'italic', axes: [A('wght', 400, 700, 400)], n: 1, url: 'Afacad:ital,wght@0,400..700;1,400..700', sc: ['latx', 'cyrl', 'viet'] },
+  { id: 'albert-sans', name: 'Albert Sans', meta: 'sans', ext: 'sans', vf: 1, ital: 'italic', axes: [A('wght', 100, 900, 400)], n: 1, url: 'Albert+Sans:ital,wght@0,100..900;1,100..900', sc: ['latx'], star: 1 },
+  { id: 'aleo', name: 'Aleo', meta: 'serif', ext: 'slab', vf: 1, ital: 'italic', axes: [A('wght', 100, 900, 400)], n: 1, url: 'Aleo:ital,wght@0,100..900;1,100..900', sc: ['latx', 'viet'] },
+  { id: 'amarna', name: 'Amarna', meta: null, ext: 'sans', vf: 1, axes: [A('wght', 100, 700, 400)], n: 1, url: 'Amarna:wght@100..700', sc: [] },
+  { id: 'andada-pro', name: 'Andada Pro', meta: 'serif', ext: 'serif', vf: 1, ital: 'italic', axes: [A('wght', 400, 840, 400)], n: 1, url: 'Andada+Pro:ital,wght@0,400..840;1,400..840', sc: ['latx', 'cyrl', 'grek', 'viet'] },
+  { id: 'ballet', name: 'Ballet', meta: 'script', ext: 'script', vf: 1, axes: [A('opsz', 16, 72, 16)], n: 1, url: 'Ballet:opsz@16..72', sc: ['latx', 'viet'] },
+  { id: 'fraunces', name: 'Fraunces', meta: 'serif', ext: 'serif', vf: 1, ital: 'italic', axes: [A('wght', 100, 900, 400), A('opsz', 9, 144, 72), A('SOFT', 0, 100, 0), A('WONK', 0, 1, 0, 1)], n: 4, url: 'Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,100..900,0..100,0..1;1,9..144,100..900,0..100,0..1', sc: ['latx', 'viet'], star: 1 },
+  { id: 'recursive', name: 'Recursive', meta: 'sans', ext: 'mono', vf: 1, ital: 'oblique', axes: [A('wght', 300, 1000, 400), A('MONO', 0, 1, 1), A('CASL', 0, 1, 0), A('CRSV', 0, 1, 0.5), A('slnt', -15, 0, 0)], n: 5, url: 'Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1', sc: ['latx', 'cyrl', 'viet'] },
+  { id: 'roboto-flex', name: 'Roboto Flex', meta: 'sans', ext: 'sans', vf: 1, ital: 'oblique', axes: [
+    A('wght', 100, 1000, 400), A('wdth', 25, 151, 100), A('opsz', 8, 144, 14), A('GRAD', -200, 150, 0), A('slnt', -10, 0, 0),
+    A('XOPQ', 27, 175, 96), A('YOPQ', 25, 135, 79), A('XTRA', 323, 603, 468), A('YTUC', 528, 760, 712), A('YTLC', 416, 570, 514),
+    A('YTAS', 649, 854, 750), A('YTDE', -305, -98, -203), A('YTFI', 560, 788, 738)],
+    n: 13, url: 'Roboto+Flex:opsz,slnt,wdth,wght,GRAD,XOPQ,XTRA,YOPQ,YTAS,YTDE,YTFI,YTLC,YTUC@8..144,-10..0,25..151,100..1000,-200..150,27..175,323..603,25..135,649..854,-305..-98,560..788,416..570,528..760', sc: ['latx', 'cyrl', 'grek', 'viet'], star: 1 },
+  { id: 'bricolage', name: 'Bricolage Grotesque', meta: null, ext: 'sans', vf: 1, axes: [A('wght', 200, 800, 400), A('opsz', 12, 96, 96), A('wdth', 75, 100, 100)], n: 3, url: 'Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,200..800', sc: ['latx', 'viet'] },
+  { id: 'roboto-slab', name: 'Roboto Slab', meta: 'slab', ext: 'slab', vf: 1, axes: [A('wght', 100, 900, 400)], n: 1, url: 'Roboto+Slab:wght@100..900', sc: ['latx', 'cyrl', 'grek', 'viet'] },
+  { id: 'dancing-script', name: 'Dancing Script', meta: 'script', ext: 'script', vf: 1, axes: [A('wght', 400, 700, 400)], n: 1, url: 'Dancing+Script:wght@400..700', sc: ['latx', 'viet'] },
+  /* static families */
+  { id: 'alegreya-sans', name: 'Alegreya Sans', meta: 'sans', ext: 'sans', vf: 0, ital: 'italic', weights: [100, 300, 400, 500, 700, 800, 900], url: 'Alegreya+Sans:ital,wght@0,100;0,300;0,400;0,500;0,700;0,800;0,900;1,100;1,300;1,400;1,500;1,700;1,800;1,900', sc: ['latx', 'cyrl', 'grek', 'viet'] },
+  { id: 'saira', name: 'Saira', meta: 'sans', ext: 'sans', src: 'local', vf: 0, weights: [100, 300, 400, 500, 700, 900],
+    widths: [{ k: 'normal', fam: 'Saira' }, { k: 'semi-condensed', fam: 'Saira Semi Condensed' }, { k: 'condensed', fam: 'Saira Condensed' }, { k: 'extra-condensed', fam: 'Saira Extra Condensed' }],
+    url: ['Saira:wght@100;300;400;500;700;900', 'Saira+Semi+Condensed:wght@100;300;400;500;700;900', 'Saira+Condensed:wght@100;300;400;500;700;900', 'Saira+Extra+Condensed:wght@100;300;400;500;700;900'], sc: ['latx', 'viet'] },
+  { id: 'abril-fatface', name: 'Abril Fatface', meta: 'display', ext: 'serif', vf: 0, weights: [400], url: 'Abril+Fatface', sc: ['latx'] },
+  { id: 'space-mono', name: 'Space Mono', meta: 'mono', ext: 'mono', src: 'local', vf: 0, ital: 'italic', weights: [400, 700], url: 'Space+Mono:ital,wght@0,400;0,700;1,400;1,700', sc: ['latx', 'viet'] },
+  { id: 'zilla-slab', name: 'Zilla Slab', meta: 'slab', ext: 'slab', src: 'local', vf: 0, ital: 'italic', weights: [300, 400, 500, 600, 700], url: 'Zilla+Slab:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700', sc: ['latx'], star: 1 },
+  { id: 'libre-baskerville', name: 'Libre Baskerville', meta: 'serif', ext: 'serif', src: 'local', vf: 0, ital: 'italic', weights: [400, 700], italWeights: [400], url: 'Libre+Baskerville:ital,wght@0,400;0,700;1,400', sc: [] },
+  { id: 'pacifico', name: 'Pacifico', meta: 'script', ext: 'script', vf: 0, weights: [400], url: 'Pacifico', sc: ['latx', 'cyrl', 'viet'] },
+];
+
+/* Histogram filters. Peaks are in normalized 0..1 space of each range (mock library distribution). */
+const RANGES = [
+  { key: 'contrast', label: 'Contrast', min: 0, max: 1, peaks: [[0.78, 0.03, 1], [0.72, 0.06, 0.5], [0.88, 0.04, 0.35], [0.3, 0.2, 0.08]] },
+  { key: 'weight', label: 'Weight', min: 0, max: 1, peaks: [[0.42, 0.03, 1], [0.38, 0.08, 0.45], [0.6, 0.1, 0.12]] },
+  { key: 'width', label: 'Width', min: 0.09, max: 2, peaks: [[0.42, 0.03, 1], [0.39, 0.07, 0.5], [0.3, 0.1, 0.1]] },
+  { key: 'xh', label: 'X-Height', min: 0.03, max: 1, peaks: [[0.47, 0.02, 1], [0.5, 0.04, 0.8], [0.54, 0.06, 0.4], [0.35, 0.12, 0.08]] },
+];
+
+/* ───────────── Helpers ───────────── */
+const $ = (s, root = document) => root.querySelector(s);
+const $$ = (s, root = document) => [...root.querySelectorAll(s)];
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const lerp = ([a, b], t) => a + (b - a) * t;
+function rnd(s) {
+  let h = 2166136261;
+  for (const ch of s) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+  return ((h >>> 0) % 10000) / 10000;
+}
+const fmtAxis = (a, v) => (a.step < 1 ? Number(v).toFixed(2) : String(Math.round(v)));
+
+const IC = {
+  star: '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>',
+  compare: '<rect x="3.5" y="5" width="7" height="14" rx="1"/><rect x="13.5" y="5" width="7" height="14" rx="1"/>',
+  chev: '<path d="M6 9l6 6 6-6"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+};
+const icon = (n) => `<svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n]}</svg>`;
+
+/* ───────────── Derived font facts ───────────── */
+const BIAS = { serif: [0.45, 0.8], script: [0.5, 0.8], display: [0.2, 0.7], slab: [0.12, 0.35], sans: [0.05, 0.3], mono: [0.04, 0.2] };
+FONTS.forEach((f) => {
+  f.src = f.src || 'google';
+  f.star = !!f.star;
+  f.m = {
+    contrast: lerp(BIAS[f.ext], rnd(f.id + 'c')),
+    weight: lerp([0.3, 0.55], rnd(f.id + 'w')),
+    width: f.narrow ? lerp([0.5, 0.66], rnd(f.id + 'd')) : lerp([0.78, 1.18], rnd(f.id + 'd')),
+    xh: f.ext === 'script' ? lerp([0.3, 0.42], rnd(f.id + 'x')) : lerp([0.44, 0.6], rnd(f.id + 'x')),
+  };
+});
+
+function styleCount(f) {
+  if (f.vf) return f.ital === 'italic' ? 2 : 1;
+  return f.weights.length + (f.ital ? (f.italWeights || f.weights).length : 0);
+}
+const isMulti = (f) => (f.vf ? !!f.ital : styleCount(f) > 1);
+const wghtAxis = (f) => (f.axes || []).find((a) => a.tag === 'wght');
+const otherAxes = (f) => (f.axes || []).filter((a) => a.tag !== 'wght' && a.tag !== 'slnt');
+
+function uprightWeights(f) {
+  if (!f.vf) return f.weights;
+  const a = wghtAxis(f);
+  if (!a) return [400];
+  const out = [];
+  for (let w = Math.ceil(a.min / 100) * 100; w <= a.max; w += 100) out.push(w);
+  return out;
+}
+const italicWeights = (f) => (f.vf ? uprightWeights(f) : f.italWeights || f.weights);
+
+/* ───────────── State ───────────── */
+const fullRanges = () => Object.fromEntries(RANGES.map((r) => [r.key, [r.min, r.max]]));
+const state = {
+  q: '', starred: false, vf: 'all', tagSrc: 'ext',
+  cats: new Set(), ranges: fullRanges(), smin: 1, smax: null, amin: 1, amax: null, exLatin: false, scripts: new Set(),
+  view: 'grid', bulk: false, sel: new Set(), manual: {}, cmp: new Map(), tiles: {},
+};
+
+function tileState(f) {
+  if (state.tiles[f.id]) return state.tiles[f.id];
+  const ax = {};
+  (f.axes || []).forEach((a) => { ax[a.tag] = a.def; });
+  const others = otherAxes(f);
+  const wi = f.vf ? 0 : Math.max(0, f.weights.indexOf(400));
+  state.tiles[f.id] = { ax, axis: others[0]?.tag || null, ital: false, wi, width: 'normal' };
+  return state.tiles[f.id];
+}
+
+function catOf(f) {
+  if (state.manual[f.id]) return { c: state.manual[f.id], ast: false };
+  if (state.tagSrc === 'meta') return { c: f.meta, ast: false };
+  return { c: f.ext, ast: f.meta !== f.ext };
+}
+
+/* ───────────── Compare keys ───────────── */
+const cmpKey = (id, ital, w) => `${id}|${ital}|${w}`;
+function cmpLabel(f, ital, w) {
+  if (!w) return f.name;
+  const slant = f.ital === 'oblique' ? 'Oblique' : 'Italic';
+  if (!ital) return `${f.name} ${WNAMES[w] || w}`;
+  return w === 400 ? `${f.name} ${slant}` : `${f.name} ${WNAMES[w] || w} ${slant}`;
+}
+const cmpCount = (id) => [...state.cmp.keys()].filter((k) => k.startsWith(id + '|')).length;
+
+/* ───────────── Filtering ───────────── */
+function passesBasic(f) {
+  if (state.q && !f.name.toLowerCase().includes(state.q.toLowerCase())) return false;
+  if (state.starred && !f.star) return false;
+  if (state.vf === 'var' && !f.vf) return false;
+  if (state.vf === 'static' && f.vf) return false;
+  if (state.cats.size && !state.cats.has(catOf(f).c)) return false;
+  return passesCounts(f);
+}
+function passesCounts(f) {
+  const sc = styleCount(f);
+  if (sc < state.smin || (state.smax != null && sc > state.smax)) return false;
+  if (state.vf !== 'var' || !f.vf) return true;
+  return f.n >= state.amin && (state.amax == null || f.n <= state.amax);
+}
+/* the Axes filter exists only for Variable, so a change of type clears it */
+function setVf(v) {
+  state.vf = v;
+  if (v !== 'var') { state.amin = 1; state.amax = null; }
+}
+function passesAdvanced(f) {
+  for (const r of RANGES) {
+    const [lo, hi] = state.ranges[r.key];
+    if (f.m[r.key] < lo || f.m[r.key] > hi) return false;
+  }
+  if (state.exLatin && f.sc.length === 0) return false;
+  for (const s of state.scripts) if (!f.sc.includes(s)) return false;
+  return true;
+}
+const visibleFonts = () => FONTS.filter((f) => passesBasic(f) && passesAdvanced(f));
+
+function rangeActive(r) {
+  const [lo, hi] = state.ranges[r.key];
+  return lo > r.min || hi < r.max;
+}
+
+function activeFilters() {
+  const list = [];
+  const scriptName = Object.fromEntries(SCRIPTS);
+  if (state.q) list.push({ label: `“${state.q}”`, clear: () => { state.q = ''; } });
+  if (state.starred) list.push({ label: 'Starred', clear: () => { state.starred = false; } });
+  if (state.vf !== 'all') list.push({ label: state.vf === 'var' ? 'Variable' : 'Static', clear: () => setVf('all') });
+  state.cats.forEach((c) => list.push({ label: CATS[c].filter, dot: c, clear: () => state.cats.delete(c) }));
+  if (state.smin > 1 || state.smax != null) list.push({ label: `Styles ${state.smin}–${state.smax ?? '∞'}`, clear: () => { state.smin = 1; state.smax = null; } });
+  if (state.vf === 'var' && (state.amin > 1 || state.amax != null)) list.push({ label: `Axes ${state.amin}–${state.amax ?? '∞'}`, clear: () => { state.amin = 1; state.amax = null; } });
+  RANGES.filter(rangeActive).forEach((r) => {
+    const [lo, hi] = state.ranges[r.key];
+    list.push({ adv: 1, label: `${r.label} ${lo.toFixed(2)}–${hi.toFixed(2)}`, clear: () => { state.ranges[r.key] = [r.min, r.max]; } });
+  });
+  if (state.exLatin) list.push({ adv: 1, label: 'No basic-Latin-only', clear: () => { state.exLatin = false; } });
+  state.scripts.forEach((s) => list.push({ adv: 1, label: `Requires ${scriptName[s]}`, clear: () => state.scripts.delete(s) }));
+  return list;
+}
+
+function resetAll() {
+  Object.assign(state, { q: '', starred: false, vf: 'all', smin: 1, smax: null, amin: 1, amax: null, exLatin: false, ranges: fullRanges() });
+  state.cats.clear();
+  state.scripts.clear();
+}
+
+/* ───────────── Tile rendering ───────────── */
+function specimenCSS(f, t) {
+  if (!f.vf) {
+    const fam = f.widths ? f.widths.find((w) => w.k === t.width).fam : f.name;
+    return `font-family:'${fam}',var(--font-ui);font-weight:${f.weights[t.wi]};font-style:${t.ital ? 'italic' : 'normal'}`;
+  }
+  const parts = (f.axes || []).filter((a) => a.tag !== 'slnt').map((a) => `'${a.tag}' ${t.ax[a.tag]}`);
+  const slnt = (f.axes || []).find((a) => a.tag === 'slnt');
+  if (slnt) parts.push(`'slnt' ${t.ital ? slnt.min : 0}`);
+  const italic = t.ital && f.ital === 'italic';
+  return `font-family:'${f.name}',var(--font-ui);font-weight:${t.ax.wght ?? 400};font-style:${italic ? 'italic' : 'normal'};font-variation-settings:${parts.join(', ')}`;
+}
+
+function metaHTML(f) {
+  const c = catOf(f);
+  const label = c.c ? CATS[c.c].label : 'Untagged';
+  const ast = c.ast ? '<span class="ast" aria-hidden="true">*</span><span class="sr"> (from outline analysis)</span>' : '';
+  const count = f.vf ? `${f.n} ${f.n === 1 ? 'axis' : 'axes'}` : `${styleCount(f)} ${styleCount(f) === 1 ? 'style' : 'styles'}`;
+  const vf = f.vf ? '<span class="sep" aria-hidden="true">·</span><span>VF</span>' : '';
+  return `<span class="cat-dot" style="--c:var(--cat-${c.c || 'none'})"></span><span>${label}${ast}</span><span class="sep" aria-hidden="true">·</span><span>${count}</span>${vf}`;
+}
+
+const pct = (v, min, max) => `${((v - min) / (max - min || 1)) * 100}%`;
+
+const ctl = (head, body = '') => `<div class="ctl"><div class="ctl-head">${head}</div>${body}</div>`;
+const ticks = (n) => `<div class="ticks" aria-hidden="true">${'<span></span>'.repeat(n)}</div>`;
+
+function weightRow(f, t) {
+  if (!f.vf) {
+    const n = f.weights.length;
+    if (n === 1) return ctl(`<span class="ctl-label">Weight</span><span class="ctl-val">${f.weights[0]} only</span>`);
+    return ctl(`<span class="ctl-label">Weight</span><output class="ctl-val">${f.weights[t.wi]}</output>`,
+      `<input class="slider" type="range" data-act="wi" min="0" max="${n - 1}" step="1" value="${t.wi}" style="--p:${pct(t.wi, 0, n - 1)}" aria-label="Weight of ${esc(f.name)}" aria-valuetext="${f.weights[t.wi]}">${ticks(n)}`);
+  }
+  const a = wghtAxis(f);
+  if (!a) return ctl(`<span class="ctl-label">Weight</span><span class="ctl-val">400 · fixed</span>`);
+  const v = t.ax.wght;
+  return ctl(`<span class="ctl-label">Weight</span><output class="ctl-val">${v}</output>`,
+    `<input class="slider" type="range" data-act="wght" min="${a.min}" max="${a.max}" step="1" value="${v}" style="--p:${pct(v, a.min, a.max)}" aria-label="Weight of ${esc(f.name)}">`);
+}
+
+function staticWidthRow(f, t) {
+  if (!f.widths) return ctl(`<span class="ctl-label">Width</span><span class="ctl-val">normal</span>`);
+  const opts = f.widths.map((w) => `<option value="${w.k}"${w.k === t.width ? ' selected' : ''}>${w.k}</option>`).join('');
+  return ctl(`<span class="ctl-label">Width</span>`,
+    `<select class="select full" data-act="width" aria-label="Width of ${esc(f.name)}">${opts}</select>`);
+}
+
+function axisRow(f, t) {
+  if (!f.vf) return staticWidthRow(f, t);
+  const others = otherAxes(f);
+  if (!others.length) return '';
+  const a = others.find((x) => x.tag === t.axis);
+  const v = t.ax[a.tag];
+  const slider = `<input class="slider" type="range" data-act="axisval" min="${a.min}" max="${a.max}" step="${a.step}" value="${v}" style="--p:${pct(v, a.min, a.max)}" aria-label="${axisName(a.tag)} axis of ${esc(f.name)}">`;
+  const val = `<output class="ctl-val">${fmtAxis(a, v)}</output>`;
+  if (others.length === 1) return ctl(`<span class="ctl-label">${axisName(a.tag)}</span>${val}`, slider);
+  const opts = others.map((x) => `<option value="${x.tag}"${x.tag === a.tag ? ' selected' : ''}>${axisName(x.tag)}</option>`).join('');
+  return ctl(`<span class="ctl-label">Axis</span>${val}`,
+    `<select class="select full axis-sel" data-act="axis" aria-label="Axis of ${esc(f.name)}">${opts}</select>${slider}`);
+}
+
+function cmpButton(f) {
+  const n = cmpCount(f.id);
+  const aria = isMulti(f) ? 'aria-haspopup="dialog" aria-expanded="false"' : `aria-pressed="${n > 0}"`;
+  return `<button class="mini-btn cmp-btn${n && isMulti(f) ? ' has-count' : ''}" data-act="cmp" ${aria} aria-label="Add ${esc(f.name)} to compare" title="Compare">${icon('compare')}<span class="cmp-label">Compare</span><span class="cmp-n">${n || ''}</span></button>`;
+}
+
+function controlsHTML(f, t) {
+  const c = catOf(f);
+  const label = c.c ? CATS[c.c].label : 'Untagged';
+  const ital = f.ital
+    ? `<button class="mini-btn ital-btn" data-act="ital" aria-pressed="${t.ital}">${f.ital === 'oblique' ? 'Oblique' : 'Italic'}</button>`
+    : '';
+  return `${weightRow(f, t)}${axisRow(f, t)}
+    <button class="mini-btn cat-btn" data-act="cat" aria-haspopup="menu" aria-label="Set category of ${esc(f.name)}, now ${label}">
+      <span class="cat-dot" style="--c:var(--cat-${c.c || 'none'})"></span><span>${label}${c.ast ? '*' : ''}</span>${icon('chev')}
+    </button>
+    <div class="ctl-actions">${ital}${cmpButton(f)}</div>`;
+}
+
+function tileHTML(f) {
+  const t = tileState(f);
+  const sel = state.sel.has(f.id);
+  const n = cmpCount(f.id);
+  return `<article class="tile${sel ? ' is-selected' : ''}" data-id="${f.id}">
+    <div class="tile-top">
+      <button class="icon-btn star${f.star ? ' is-on' : ''}" data-act="star" aria-pressed="${f.star}" aria-label="Star ${esc(f.name)}">${icon('star')}</button>
+      <input class="bulk-check" type="checkbox" data-act="pick" aria-label="Select ${esc(f.name)}"${sel ? ' checked' : ''}>
+      <span class="grow"></span>
+      <span class="cmp-flag" title="In compare"${n ? '' : ' hidden'}>${icon('compare')}<span>${n}</span></span>
+      <span class="src">${f.src === 'google' ? 'Google' : 'Local'}</span>
+    </div>
+    <button class="tile-open" data-act="open">
+      <span class="specimen" aria-hidden="true" style="${specimenCSS(f, t)}">Aa</span>
+      <span class="tile-text">
+        <span class="tile-name od-truncate">${esc(f.name)}</span>
+        <span class="tile-meta">${metaHTML(f)}</span>
+      </span>
+    </button>
+    <div class="tile-panel">${controlsHTML(f, t)}</div>
+  </article>`;
+}
+
+/* ───────────── Rendering ───────────── */
+const grid = $('#grid');
+const byId = Object.fromEntries(FONTS.map((f) => [f.id, f]));
+const tileEl = (id) => grid.querySelector(`.tile[data-id="${id}"]`);
+
+function renderGrid() {
+  const list = visibleFonts();
+  grid.classList.toggle('is-list', state.view === 'list');
+  if (!list.length) {
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><p>No families match these filters.</p><button class="btn" data-act="reset-empty">Reset all filters</button></div>`;
+    return list;
+  }
+  grid.innerHTML = list.map(tileHTML).join('');
+  return list;
+}
+
+function renderCount(list) {
+  const fonts = list.reduce((s, f) => s + styleCount(f), 0);
+  $('#count').innerHTML = `<b>${fonts}</b> fonts in <b>${list.length}</b> families of ${TOTAL_LIBRARY.toLocaleString('en-US')} total`;
+}
+
+let activeList = [];
+function renderActive() {
+  activeList = activeFilters();
+  const bar = $('#activeBar');
+  bar.hidden = activeList.length === 0;
+  bar.innerHTML = activeList.length
+    ? `<span class="active-label">Active</span>${activeList.map((a, i) => `<button class="fchip" data-i="${i}" aria-label="Remove filter ${esc(a.label)}">${a.dot ? `<span class="cat-dot" style="--c:var(--cat-${a.dot})"></span>` : ''}${esc(a.label)}${icon('x')}</button>`).join('')}<button class="btn btn-ghost btn-sm" data-i="all">Reset all</button>`
+    : '';
+  const badge = $('#filterBadge');
+  badge.hidden = activeList.length === 0;
+  badge.textContent = activeList.length;
+  const advN = activeList.filter((a) => a.adv).length;
+  $('#advBadge').hidden = advN === 0;
+  $('#advBadge').textContent = advN;
+}
+
+function renderAll() {
+  const list = renderGrid();
+  renderCount(list);
+  renderActive();
+}
+
+function renderTray() {
+  const tray = $('#tray');
+  tray.hidden = state.cmp.size === 0;
+  $('#trayCount').textContent = state.cmp.size;
+  $('#trayGo').textContent = `Compare ${state.cmp.size}`;
+  $('#trayChips').innerHTML = [...state.cmp].map(([k, label]) =>
+    `<span class="tchip">${esc(label)}<button class="icon-btn" data-key="${k}" aria-label="Remove ${esc(label)} from compare">${icon('x')}</button></span>`).join('');
+}
+
+function renderBulk() {
+  document.body.classList.toggle('bulk', state.bulk);
+  $('#bulkBtn').setAttribute('aria-pressed', state.bulk);
+  $('#bulkBar').hidden = !state.bulk;
+  $('#selCount').textContent = state.sel.size;
+  $('#bulkCat').disabled = state.sel.size === 0;
+}
+
+function updTileCmp(id) {
+  const el = tileEl(id);
+  if (!el) return;
+  const f = byId[id];
+  const n = cmpCount(id);
+  const flag = $('.cmp-flag', el);
+  flag.hidden = !n;
+  flag.lastElementChild.textContent = n;
+  const btn = $('[data-act="cmp"]', el);
+  $('.cmp-n', btn).textContent = n || '';
+  if (isMulti(f)) btn.classList.toggle('has-count', n > 0);
+  else btn.setAttribute('aria-pressed', n > 0);
+}
+
+/* ───────────── Toast ───────────── */
+let toastTimer;
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.classList.add('is-on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('is-on'), 2200);
+}
+
+/* ───────────── Popovers ───────────── */
+let popAnchor = null;
+function placePop(pop, anchor) {
+  const r = anchor.getBoundingClientRect();
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  const left = Math.max(8, Math.min(r.left, innerWidth - w - 8));
+  let top = r.bottom + 6;
+  if (top + h > innerHeight - 8) top = Math.max(8, r.top - 6 - h);
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+}
+function openPop(pop, anchor) {
+  if (pop.matches(':popover-open')) pop.hidePopover();
+  popAnchor = anchor;
+  anchor.closest('.tile')?.classList.add('is-active');
+  pop.showPopover();
+  placePop(pop, anchor);
+  const first = pop.querySelector('[aria-checked="true"], input, button');
+  first?.focus({ preventScroll: true });
+}
+$$('.pop').forEach((pop) => pop.addEventListener('toggle', (e) => {
+  if (e.newState !== 'closed') return;
+  $$('.tile.is-active').forEach((t) => t.classList.remove('is-active'));
+  if (!popAnchor || !popAnchor.isConnected) return;
+  popAnchor.setAttribute('aria-expanded', 'false');
+  const a = document.activeElement;
+  if (a === document.body || pop.contains(a)) popAnchor.focus({ preventScroll: true });
+}));
+/* arrow-key navigation inside menus */
+$('#catMenu').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  e.preventDefault();
+  const items = $$('.menu-item', e.currentTarget);
+  const i = items.indexOf(document.activeElement);
+  const next = e.key === 'ArrowDown' ? (i + 1) % items.length : (i - 1 + items.length) % items.length;
+  items[next].focus();
+});
+
+/* Category menu */
+let catTarget = null;
+function openCatMenu(anchor, target, current) {
+  catTarget = target;
+  const menu = $('#catMenu');
+  menu.innerHTML = `<p class="menu-title">${target === 'bulk' ? `Set category · ${state.sel.size} families` : 'Set category'}</p>`
+    + CAT_ORDER.map((k) => `<button class="menu-item" role="menuitemradio" aria-checked="${k === current}" data-cat="${k}"><span class="cat-dot" style="--c:var(--cat-${k})"></span>${CATS[k].filter}${k === current ? icon('check') : ''}</button>`).join('')
+    + `<div class="menu-sep" role="separator"></div><button class="menu-item" role="menuitem" data-cat="">Reset to detected</button>`;
+  openPop(menu, anchor);
+}
+$('#catMenu').addEventListener('click', (e) => {
+  const item = e.target.closest('[data-cat]');
+  if (!item) return;
+  const ids = catTarget === 'bulk' ? [...state.sel] : [catTarget];
+  ids.forEach((id) => { if (item.dataset.cat) state.manual[id] = item.dataset.cat; else delete state.manual[id]; });
+  $('#catMenu').hidePopover();
+  renderAll();
+  const back = catTarget === 'bulk' ? $('#bulkCat') : grid.querySelector(`.tile[data-id="${catTarget}"] [data-act="cat"]`);
+  (back || $('#search')).focus({ preventScroll: true });
+  toast(item.dataset.cat ? `Category set to ${CATS[item.dataset.cat].filter} for ${ids.length} ${ids.length === 1 ? 'family' : 'families'}` : 'Category reset to detected');
+});
+
+/* Compare popover */
+let cmpFont = null;
+function openCmpMenu(anchor, f) {
+  cmpFont = f;
+  const groups = [[0, f.ital ? 'Upright' : 'Weights', uprightWeights(f)]];
+  if (f.ital) groups.push([1, f.ital === 'oblique' ? 'Oblique' : 'Italic', italicWeights(f)]);
+  const menu = $('#cmpMenu');
+  menu.innerHTML = `<p class="menu-title">${esc(f.name)}</p><p class="menu-sub">Choose styles to compare</p>`
+    + groups.map(([i, label, ws]) => `<fieldset class="wset"><legend>${label}</legend><div class="wgrid">${ws.map((w) => {
+      const k = cmpKey(f.id, i, w);
+      return `<label class="wchk" title="${cmpLabel(f, i, w)}"><input type="checkbox" data-key="${k}" data-i="${i}" data-w="${w}"${state.cmp.has(k) ? ' checked' : ''}><span>${w}</span></label>`;
+    }).join('')}</div></fieldset>`).join('')
+    + `<div class="pop-foot"><button class="btn btn-ghost btn-sm" data-cmp="all">Select all</button><button class="btn btn-ghost btn-sm" data-cmp="none">Clear</button></div>`;
+  anchor.setAttribute('aria-expanded', 'true');
+  openPop(menu, anchor);
+}
+function setCmpBox(box, on) {
+  box.checked = on;
+  const k = box.dataset.key;
+  if (on) state.cmp.set(k, cmpLabel(cmpFont, +box.dataset.i, +box.dataset.w));
+  else state.cmp.delete(k);
+}
+$('#cmpMenu').addEventListener('change', (e) => {
+  if (!e.target.dataset.key) return;
+  setCmpBox(e.target, e.target.checked);
+  updTileCmp(cmpFont.id);
+  renderTray();
+});
+$('#cmpMenu').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-cmp]');
+  if (!b) return;
+  $$('input[data-key]', $('#cmpMenu')).forEach((box) => setCmpBox(box, b.dataset.cmp === 'all'));
+  updTileCmp(cmpFont.id);
+  renderTray();
+});
+
+/* ───────────── Tile interactions (delegated) ───────────── */
+function applySpecimen(tile, f) {
+  $('.specimen', tile).style.cssText = specimenCSS(f, tileState(f));
+}
+
+function toggleSelect(id, tile) {
+  if (state.sel.has(id)) state.sel.delete(id); else state.sel.add(id);
+  const on = state.sel.has(id);
+  tile.classList.toggle('is-selected', on);
+  $('.bulk-check', tile).checked = on;
+  renderBulk();
+}
+
+function toggleStar(f, btn) {
+  f.star = !f.star;
+  if (state.starred) { renderAll(); $('#starredBtn').focus(); return; }
+  btn.classList.toggle('is-on', f.star);
+  btn.setAttribute('aria-pressed', f.star);
+}
+
+function toggleCompare(f, btn) {
+  if (isMulti(f)) { openCmpMenu(btn, f); return; }
+  const k = cmpKey(f.id, 0, 0);
+  if (state.cmp.has(k)) state.cmp.delete(k); else state.cmp.set(k, cmpLabel(f, 0, 0));
+  updTileCmp(f.id);
+  renderTray();
+}
+
+const CLICK = {
+  star: (f, el) => toggleStar(f, el),
+  open: (f, el, tile) => (state.bulk ? toggleSelect(f.id, tile) : toast(`Opening ${f.name} in Analyze…`)),
+  cat: (f, el) => openCatMenu(el, f.id, catOf(f).c),
+  cmp: (f, el) => toggleCompare(f, el),
+  ital: (f, el, tile) => {
+    const t = tileState(f);
+    t.ital = !t.ital;
+    el.setAttribute('aria-pressed', t.ital);
+    applySpecimen(tile, f);
+  },
+};
+
+grid.addEventListener('click', (e) => {
+  if (e.target.closest('[data-act="reset-empty"]')) { resetAll(); syncControls(); renderAll(); $('#search').focus(); return; }
+  const el = e.target.closest('[data-act]');
+  const tile = e.target.closest('.tile');
+  if (!el || !tile || !CLICK[el.dataset.act]) return;
+  CLICK[el.dataset.act](byId[tile.dataset.id], el, tile);
+});
+
+grid.addEventListener('input', (e) => {
+  const el = e.target;
+  const tile = el.closest('.tile');
+  if (!tile || !el.classList.contains('slider')) return;
+  const f = byId[tile.dataset.id];
+  const t = tileState(f);
+  const v = +el.value;
+  const out = el.closest('.ctl').querySelector('.ctl-val');
+  if (el.dataset.act === 'wght') { t.ax.wght = v; out.textContent = v; }
+  if (el.dataset.act === 'axisval') { t.ax[t.axis] = v; out.textContent = fmtAxis(otherAxes(f).find((a) => a.tag === t.axis), v); }
+  if (el.dataset.act === 'wi') { t.wi = v; out.textContent = f.weights[v]; el.setAttribute('aria-valuetext', f.weights[v]); }
+  el.style.setProperty('--p', pct(v, +el.min, +el.max));
+  applySpecimen(tile, f);
+});
+
+grid.addEventListener('change', (e) => {
+  const el = e.target;
+  const tile = el.closest('.tile');
+  if (!tile) return;
+  const f = byId[tile.dataset.id];
+  const t = tileState(f);
+  if (el.dataset.act === 'pick') { toggleSelect(f.id, tile); return; }
+  if (el.dataset.act === 'width') { t.width = el.value; applySpecimen(tile, f); return; }
+  if (el.dataset.act === 'axis') {
+    t.axis = el.value;
+    const panel = $('.tile-panel', tile);
+    panel.innerHTML = controlsHTML(f, t);
+    $('[data-act="axis"]', panel).focus();
+  }
+});
+
+/* ───────────── Toolbar & dock ───────────── */
+$('#search').addEventListener('input', (e) => { state.q = e.target.value.trim(); renderAll(); });
+
+$$('[data-view]').forEach((b) => b.addEventListener('click', () => {
+  state.view = b.dataset.view;
+  $$('[data-view]').forEach((x) => x.setAttribute('aria-pressed', x === b));
+  renderGrid();
+}));
+
+function setSidebar(open) {
+  $('#sidebar').hidden = !open;
+  $('#workspace').classList.toggle('no-sidebar', !open);
+  $('#filtersToggle').setAttribute('aria-expanded', open);
+}
+$('#filtersToggle').addEventListener('click', () => setSidebar($('#sidebar').hidden));
+
+$('#bulkBtn').addEventListener('click', () => {
+  state.bulk = !state.bulk;
+  if (!state.bulk) { state.sel.clear(); $$('.tile.is-selected').forEach((t) => t.classList.remove('is-selected')); $$('.bulk-check').forEach((c) => { c.checked = false; }); }
+  renderBulk();
+});
+$('#bulkDone').addEventListener('click', () => { $('#bulkBtn').click(); $('#bulkBtn').focus(); });
+$('#selAll').addEventListener('click', () => {
+  visibleFonts().forEach((f) => state.sel.add(f.id));
+  $$('.tile', grid).forEach((t) => { t.classList.add('is-selected'); $('.bulk-check', t).checked = true; });
+  renderBulk();
+});
+$('#bulkCat').addEventListener('click', (e) => openCatMenu(e.currentTarget, 'bulk', null));
+
+$('#trayChips').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-key]');
+  if (!b) return;
+  const idx = $$('[data-key]', $('#trayChips')).indexOf(b);
+  state.cmp.delete(b.dataset.key);
+  updTileCmp(b.dataset.key.split('|')[0]);
+  renderTray();
+  const rest = $$('[data-key]', $('#trayChips'));
+  (rest[Math.min(idx, rest.length - 1)] || $('#search')).focus();
+});
+$('#trayClear').addEventListener('click', () => {
+  const ids = new Set([...state.cmp.keys()].map((k) => k.split('|')[0]));
+  state.cmp.clear();
+  ids.forEach(updTileCmp);
+  renderTray();
+  $('#search').focus();
+});
+$('#trayGo').addEventListener('click', () => toast(`Opening Compare with ${state.cmp.size} styles…`));
+
+$('.tab[aria-current="page"]').addEventListener('click', (e) => e.preventDefault());
+
+$('#activeBar').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-i]');
+  if (!b) return;
+  const idx = b.dataset.i;
+  if (idx === 'all') resetAll(); else activeList[+idx].clear();
+  syncControls();
+  renderAll();
+  const chips = $$('#activeBar [data-i]');
+  (chips[Math.min(+idx || 0, chips.length - 2)] || $('#search')).focus();
+});
+
+/* ───────────── Sidebar controls ───────────── */
+function buildSidebar() {
+  $('#catChips').innerHTML = CAT_ORDER.map((k) =>
+    `<label class="chip"><input type="checkbox" name="cat" value="${k}"><span><span class="cat-dot" style="--c:var(--cat-${k})"></span>${CATS[k].filter}</span></label>`).join('');
+  $('#scriptChips').innerHTML = SCRIPTS.map(([k, label]) =>
+    `<label class="chip chip-sm"><input type="checkbox" name="script" value="${k}"><span>${label}</span></label>`).join('');
+}
+
+const hists = {};
+const HW = 240, HH = 44, BINS = 64;
+function histPath(r) {
+  const vals = [];
+  for (let i = 0; i < BINS; i++) {
+    const x = i / (BINS - 1);
+    const v = r.peaks.reduce((s, [c, sd, a]) => s + a * Math.exp(-((x - c) ** 2) / (2 * sd * sd)), 0);
+    vals.push(v * (0.85 + 0.3 * rnd(r.key + i)) + 0.01);
+  }
+  const max = Math.max(...vals);
+  const pts = vals.map((v, i) => `L${((i / (BINS - 1)) * HW).toFixed(1)},${(HH - (v / max) * (HH - 2)).toFixed(1)}`).join('');
+  return `M0,${HH}${pts}L${HW},${HH}Z`;
+}
+function buildHists() {
+  $('#hists').innerHTML = RANGES.map((r) => {
+    const d = histPath(r);
+    const step = ((r.max - r.min) / 100).toFixed(4);
+    return `<div class="hist" data-key="${r.key}">
+      <div class="hist-head"><span class="hist-label" id="h-${r.key}">${r.label}</span><output class="hist-val mono"></output></div>
+      <svg class="hist-svg" viewBox="0 0 ${HW} ${HH}" preserveAspectRatio="none" aria-hidden="true">
+        <defs><clipPath id="clip-${r.key}"><rect y="0" height="${HH}" x="0" width="${HW}"/></clipPath></defs>
+        <path class="hist-bg" d="${d}"/><path class="hist-fg" d="${d}" clip-path="url(#clip-${r.key})"/>
+      </svg>
+      <div class="range2"><div class="range2-track"><div class="range2-fill"></div></div>
+        <input type="range" class="lo" min="${r.min}" max="${r.max}" step="${step}" value="${r.min}" aria-label="${r.label} minimum">
+        <input type="range" class="hi" min="${r.min}" max="${r.max}" step="${step}" value="${r.max}" aria-label="${r.label} maximum">
+      </div>
+      <div class="hist-scale mono" aria-hidden="true"><span>${r.min.toFixed(2)}</span><span>${r.max.toFixed(2)}</span></div>
+    </div>`;
+  }).join('');
+  RANGES.forEach((r) => {
+    const root = $(`.hist[data-key="${r.key}"]`);
+    hists[r.key] = { root, lo: $('.lo', root), hi: $('.hi', root), clip: $('rect', root), wrap: $('.range2', root), out: $('output', root) };
+    paintHist(r);
+  });
+}
+function paintHist(r) {
+  const h = hists[r.key];
+  const [lo, hi] = state.ranges[r.key];
+  const a = (lo - r.min) / (r.max - r.min), b = (hi - r.min) / (r.max - r.min);
+  h.clip.setAttribute('x', a * HW);
+  h.clip.setAttribute('width', Math.max(0, (b - a) * HW));
+  h.wrap.style.setProperty('--lo', a * 100);
+  h.wrap.style.setProperty('--hi', b * 100);
+  h.lo.style.zIndex = a > 0.5 ? 3 : 1;
+  h.out.textContent = `${lo.toFixed(2)} – ${hi.toFixed(2)}`;
+}
+$('#hists').addEventListener('input', (e) => {
+  const root = e.target.closest('.hist');
+  const r = RANGES.find((x) => x.key === root.dataset.key);
+  const h = hists[r.key];
+  let lo = +h.lo.value, hi = +h.hi.value;
+  if (lo > hi) { if (e.target === h.lo) { lo = hi; h.lo.value = lo; } else { hi = lo; h.hi.value = hi; } }
+  state.ranges[r.key] = [lo, hi];
+  paintHist(r);
+  renderAll();
+});
+
+function syncControls() {
+  $('#search').value = state.q;
+  $('#starredBtn').setAttribute('aria-pressed', state.starred);
+  $$('input[name="vf"]').forEach((r) => { r.checked = r.value === state.vf; });
+  $$('input[name="cat"]').forEach((c) => { c.checked = state.cats.has(c.value); });
+  $$('input[name="script"]').forEach((c) => { c.checked = state.scripts.has(c.value); });
+  $('#smin').value = state.smin;
+  $('#smax').value = state.smax ?? '';
+  $('#axesGroup').hidden = state.vf !== 'var';
+  $('#amin').value = state.amin;
+  $('#amax').value = state.amax ?? '';
+  $('#exLatin').checked = state.exLatin;
+  RANGES.forEach((r) => {
+    hists[r.key].lo.value = state.ranges[r.key][0];
+    hists[r.key].hi.value = state.ranges[r.key][1];
+    paintHist(r);
+  });
+}
+
+$('#starredBtn').addEventListener('click', () => { state.starred = !state.starred; syncControls(); renderAll(); });
+$('#sidebar').addEventListener('change', (e) => {
+  const el = e.target;
+  if (el.name === 'vf') { setVf(el.value); syncControls(); }
+  else if (el.name === 'tags') state.tagSrc = el.value;
+  else if (el.name === 'cat') { if (el.checked) state.cats.add(el.value); else state.cats.delete(el.value); }
+  else if (el.name === 'script') { if (el.checked) state.scripts.add(el.value); else state.scripts.delete(el.value); }
+  else if (el.id === 'exLatin') state.exLatin = el.checked;
+  else return;
+  renderAll();
+});
+$('#smin').addEventListener('input', (e) => { state.smin = Math.max(1, +e.target.value || 1); renderAll(); });
+$('#smax').addEventListener('input', (e) => { state.smax = e.target.value === '' ? null : Math.max(1, +e.target.value); renderAll(); });
+$('#amin').addEventListener('input', (e) => { state.amin = Math.max(1, +e.target.value || 1); renderAll(); });
+$('#amax').addEventListener('input', (e) => { state.amax = e.target.value === '' ? null : Math.max(1, +e.target.value); renderAll(); });
+$('#resetSide').addEventListener('click', () => { resetAll(); syncControls(); renderAll(); });
+$('#tagsInfoBtn').addEventListener('click', (e) => openPop($('#tagsInfo'), e.currentTarget));
+
+/* ───────────── Font loading (specimen subset: only "Aa") ───────────── */
+function loadFonts() {
+  const frag = document.createDocumentFragment();
+  FONTS.flatMap((f) => [].concat(f.url)).forEach((spec) => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = `https://fonts.googleapis.com/css2?family=${spec}&text=Aa&display=swap`;
+    frag.append(link);
+  });
+  document.head.append(frag);
+}
+
+/* ───────────── Init ───────────── */
+function seedCompare() {
+  state.cmp.set(cmpKey('alexandria', 0, 0), cmpLabel(byId.alexandria, 0, 0));
+  state.cmp.set(cmpKey('fraunces', 0, 400), cmpLabel(byId.fraunces, 0, 400));
+}
+
+const headObserver = new ResizeObserver(([entry]) => {
+  document.documentElement.style.setProperty('--head-h', `${Math.round(entry.borderBoxSize[0].blockSize)}px`);
+});
+headObserver.observe($('#appHead'));
+
+loadFonts();
+buildSidebar();
+buildHists();
+seedCompare();
+if (matchMedia('(max-width: 900px)').matches) setSidebar(false);
+syncControls();
+renderAll();
+renderTray();
+renderBulk();
+</script>
+</body>
+</html>

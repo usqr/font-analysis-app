@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analyze · Font Analyzer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..600&family=Geist+Mono:wght@400..500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato&family=Merriweather&family=Fira+Code&family=Pacifico&text=Aa&display=swap">
+<style>
+/* OD-LAYOUT-PRIMITIVES v1 — structure only: display, flex/grid, overflow, wrapping, ratio, geometry.
+   Put this @layer first; product CSS outside the layer wins ordinary layout rules.
+   Native hidden and closed-dialog states take precedence over component display rules. */
+@layer od-layout {
+  [hidden]:not([hidden="until-found" i]) { display: none !important; }
+  dialog:not([open]) { display: none !important; }
+
+  :where(.od-stack,.od-row,.od-row-top,.od-cluster,.od-grid,.od-field,.od-stat,.od-cell,.od-tile) > :where(*) { min-width: 0; }
+
+  .od-stack   { display: flex; flex-direction: column; gap: var(--od-gap, 8px); }
+  .od-row     { display: flex; align-items: center; gap: var(--od-gap, 8px); }
+  .od-row-top { display: flex; align-items: flex-start; gap: var(--od-gap, 8px); }
+  .od-cluster { display: flex; flex-wrap: wrap; align-items: center; gap: var(--od-gap, 8px); }
+  .od-fill    { flex: 1 1 0; min-width: 0; }
+  .od-fixed   { flex: none; }
+  .od-grid    { display: grid; gap: var(--od-gap, 12px); grid-template-columns: repeat(var(--od-cols, 3), minmax(0, 1fr)); }
+
+  .od-stat, .od-field, .od-cell { display: grid; gap: var(--od-gap, 2px); }
+  :where(.od-stat,.od-field,.od-cell) > :where(*) { display: block; }
+  .od-tile { display: grid; grid-template-rows: auto 1fr; }
+  :where(.od-tile) > :where(*) { display: block; }
+
+  .od-media { display: block; width: 100%; height: auto; aspect-ratio: var(--od-ratio, auto); }
+  .od-media-cover { object-fit: cover; }
+
+  .od-icon { display: inline-block; inline-size: var(--od-icon-size, 1em); block-size: var(--od-icon-size, 1em); flex: none; }
+
+  .od-truncate { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .od-clamp-2, .od-clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .od-clamp-2 { -webkit-line-clamp: 2; }
+  .od-clamp-3 { -webkit-line-clamp: 3; }
+  .od-lines-2 { min-height: calc(2 * 1.4em); }
+  .od-nowrap  { white-space: nowrap; }
+  .od-keep    { word-break: keep-all; overflow-wrap: anywhere; }
+
+  .od-screen { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; }
+  .od-scroll { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+
+  .od-rail { display: flex; gap: var(--od-gap, 8px); overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+             padding-inline: var(--od-rail-pad, 16px); scroll-padding-inline: var(--od-rail-pad, 16px); }
+  .od-rail::-webkit-scrollbar { display: none; }
+  :where(.od-rail) > :where(*) { flex: none; scroll-snap-align: start; }
+  :where(.od-rail) > :where(:last-child) { margin-inline-end: var(--od-rail-pad, 16px); }
+
+  .od-spacer { flex: none; visibility: hidden; pointer-events: none; }
+  .od-touch  { min-width: 44px; min-height: 44px; }
+}
+:root [hidden]:where(:not([hidden="until-found" i])) { display: none; }
+/* /OD-LAYOUT-PRIMITIVES v1 */
+
+/* ───────────── Design tokens (map 1:1 to Tailwind 4 @theme) ───────────── */
+:root {
+  color-scheme: dark;
+
+  /* surfaces — neutral near-black, no hue cast */
+  --bg: #0b0c0e;
+  --surface-1: #111215;
+  --surface-2: #17181c;
+  --surface-3: #1e2025;
+  --surface-4: #2a2d34;
+  --border: #22242a;
+  --border-strong: #31343b;
+
+  /* text */
+  --text: #e6e7ea;
+  --text-muted: #9b9fa8;
+  --text-faint: #6c7079; /* decorative ticks only — below 4.5:1 */
+
+  /* single restrained accent: interactive state only */
+  --accent: #8ea2f0;
+  --accent-line: rgba(142, 162, 240, 0.45);
+  --accent-soft: rgba(142, 162, 240, 0.14);
+  --accent-fill: #3f58c8;
+  --accent-fill-hover: #4a64d6;
+  --on-accent: #ffffff;
+
+  --star: #e3b955;
+
+  /* category hues — muted, used only as small dots */
+  --cat-sans: #7fae93;
+  --cat-serif: #c99486;
+  --cat-display: #a993cc;
+  --cat-script: #c9ac6e;
+  --cat-mono: #6fadb3;
+  --cat-slab: #a7a58a;
+  --cat-none: #4a4d55;
+
+  /* type */
+  --font-ui: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --fs-xs: 12px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-specimen: 56px;
+
+  /* spacing — 4px grid */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* shape */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-pill: 999px;
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+  /* motion */
+  --dur-in: 200ms;
+  --dur-out: 140ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+
+  /* layout */
+  --nav-h: 48px;
+  --sidebar-w: 288px;
+  --tile-min: 172px;
+  --ctl-h: 24px;
+  --head-h: 105px;        /* measured at runtime from .app-head */
+  --meta-h: 18px;         /* tile meta line: 12px × 1.5 */
+  --panel-reserve: 192px; /* room below the last grid row for the hover panel */
+}
+
+/* ───────────── Base ───────────── */
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font: var(--fs-md)/1.5 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* ───────────── Buttons & controls ───────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  height: 32px; padding: 0 var(--sp-3);
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--text);
+  font-size: var(--fs-md); font-weight: 500; white-space: nowrap;
+}
+.btn:hover { background: var(--surface-3); }
+.btn[aria-pressed="true"], .btn[aria-expanded="true"].is-toggle { background: var(--accent-soft); border-color: var(--accent-line); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--on-accent); }
+.btn-primary:hover { background: var(--accent-fill-hover); }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--text-muted); }
+.btn-ghost:hover { background: var(--surface-3); color: var(--text); }
+.btn-sm { height: 28px; padding: 0 var(--sp-2); font-size: var(--fs-xs); }
+.badge {
+  display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: var(--r-pill); background: var(--accent-fill); color: var(--on-accent);
+  font-size: var(--fs-xs); font-weight: 600;
+}
+.icon-btn {
+  display: inline-grid; place-items: center; width: 28px; height: 28px;
+  border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-muted);
+}
+.icon-btn:hover { background: var(--surface-3); color: var(--text); }
+
+/* segmented control (radio-based or button-based) */
+.seg {
+  display: inline-flex; padding: 2px; gap: 2px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-sm);
+}
+.seg label { position: relative; display: block; }
+.seg input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.seg span, .seg button {
+  display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 var(--sp-3);
+  border: 0; border-radius: 3px; background: transparent; color: var(--text-muted);
+  font-size: var(--fs-md); white-space: nowrap;
+}
+.seg button { padding: 0 var(--sp-2); }
+.seg span:hover, .seg button:hover { color: var(--text); }
+.seg input:checked + span, .seg button[aria-pressed="true"] { background: var(--surface-4); color: var(--text); }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* filter chips (checkbox-based) */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { position: relative; display: block; }
+.chip input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.chip input + span {
+  display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 var(--sp-3);
+  border: 1px solid var(--border-strong); border-radius: var(--r-pill);
+  color: var(--text-muted); font-size: var(--fs-md); white-space: nowrap;
+}
+.chip-sm input + span { height: 24px; padding: 0 10px; font-size: var(--fs-xs); }
+.chip input + span:hover { color: var(--text); border-color: var(--surface-4); }
+.chip input:checked + span { background: var(--accent-soft); border-color: var(--accent-line); color: var(--text); }
+.chip input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.cat-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--cat-none)); flex: none; }
+
+/* ───────────── Sticky app head (nav + toolbar) ───────────── */
+.app-head { position: sticky; top: 0; z-index: 20; background: var(--bg); }
+
+/* ───────────── Top nav ───────────── */
+.topnav {
+  display: flex; align-items: center; gap: var(--sp-6);
+  height: var(--nav-h); padding: 0 var(--sp-5);
+  border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 600; font-size: var(--fs-md); letter-spacing: -0.01em; }
+.tabs { display: flex; gap: var(--sp-1); }
+.tab {
+  display: flex; align-items: center; height: 30px; padding: 0 var(--sp-3);
+  border-radius: var(--r-sm); color: var(--text-muted); text-decoration: none; font-size: var(--fs-md);
+}
+.tab:hover { color: var(--text); background: var(--surface-2); }
+.tab[aria-current="page"] { color: var(--text); background: var(--surface-3); }
+
+/* toast */
+.toast {
+  position: fixed; top: calc(var(--head-h) + 12px); right: var(--sp-5); z-index: 30;
+  max-width: 320px; padding: var(--sp-2) var(--sp-4);
+  background: var(--surface-3); border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop); font-size: var(--fs-md);
+  opacity: 0; transform: translateY(-6px); pointer-events: none;
+  transition: opacity var(--dur-out) var(--ease-in), transform var(--dur-out) var(--ease-in);
+}
+.toast.is-on { opacity: 1; transform: none; transition: opacity var(--dur-in) var(--ease-out), transform var(--dur-in) var(--ease-out); }
+
+/* ───────────── Analyze page ───────────── */
+.page { min-height: calc(100dvh - var(--nav-h)); }
+
+/* empty state */
+.start { width: min(720px, 100% - 2 * var(--sp-5)); margin: 0 auto; padding: 96px 0 var(--sp-8); display: flex; flex-direction: column; gap: var(--sp-6); }
+.start-head { text-align: center; }
+.start-title { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.3; }
+.start-sub { margin: var(--sp-1) 0 0; color: var(--text-muted); }
+.drop {
+  display: flex; flex-direction: column; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-8) var(--sp-6);
+  border: 1px dashed var(--border-strong); border-radius: var(--r-lg); background: var(--surface-1);
+  text-align: center; cursor: pointer;
+  transition: border-color var(--dur-in) var(--ease-out), background var(--dur-in) var(--ease-out);
+}
+.drop:hover { border-color: var(--surface-4); background: var(--surface-2); }
+.drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.drop.is-over { border-style: solid; border-color: var(--accent-line); background: var(--accent-soft); }
+.drop .od-icon { --od-icon-size: 28px; color: var(--text-muted); }
+.drop-main { font-size: var(--fs-lg); }
+.drop-link { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.drop-hint { font-size: var(--fs-xs); color: var(--text-muted); }
+.samples { display: flex; flex-direction: column; gap: var(--sp-2); }
+.samples-title { margin: 0; font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); }
+.sample-grid { display: grid; gap: var(--sp-3); grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.sample {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1);
+  padding: var(--sp-3) var(--sp-4) var(--sp-4); text-align: left;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-md);
+  transition: border-color var(--dur-in) var(--ease-out), background var(--dur-in) var(--ease-out);
+}
+.sample:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.sample-aa { font-size: 40px; line-height: 56px; color: var(--text); }
+.sample-name { font-weight: 500; }
+.sample-cat { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-muted); }
+
+/* loaded state */
+.loaded { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: calc(100dvh - var(--nav-h)); }
+.font-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--border); }
+.font-id { flex: 1; min-width: 0; }
+.font-name { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; }
+.font-name:focus { outline: none; }
+.font-name:focus-visible { outline: 2px solid var(--accent); }
+.font-meta { margin: 0; font-size: var(--fs-xs); color: var(--text-muted); }
+.font-meta .sep { opacity: 0.6; margin: 0 4px; }
+.head-actions { display: flex; gap: var(--sp-2); }
+.btn .od-icon { --od-icon-size: 16px; }
+
+.subtabs { display: flex; gap: var(--sp-5); padding: 0 var(--sp-5); border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+.subtab {
+  position: relative; height: 44px; padding: 0; border: 0; background: transparent;
+  color: var(--text-muted); font-size: var(--fs-md); white-space: nowrap;
+}
+.subtab:hover { color: var(--text); }
+.subtab[aria-selected="true"] { color: var(--text); font-weight: 500; }
+.subtab[aria-selected="true"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; border-radius: 1px; background: var(--accent); }
+.subtab:focus-visible { outline-offset: -2px; border-radius: var(--r-sm); }
+
+.analysis { display: grid; grid-template-columns: minmax(0, 1fr) 300px; min-height: 0; }
+.stage { min-width: 0; overflow: auto; padding: var(--sp-5); }
+.panel { height: 100%; }
+.panel:focus-visible { outline-offset: -2px; }
+.canvas {
+  display: flex; flex-direction: column; gap: var(--sp-3); height: 100%; min-height: 420px;
+  padding: var(--sp-4) var(--sp-5); background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-lg);
+}
+.canvas-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2) var(--sp-4); }
+.canvas-title { margin: 0; font-size: var(--fs-md); font-weight: 600; }
+.legend { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-5); margin: 0; padding: 0; list-style: none; font-size: var(--fs-xs); color: var(--text-muted); }
+.legend li { display: flex; align-items: center; gap: var(--sp-2); }
+.legend svg { width: 24px; height: 8px; flex: none; }
+.chart { flex: 1; min-height: 0; display: flex; }
+.chart svg { display: block; width: 100%; height: 100%; }
+
+/* chart marks */
+.g-label { font: 12px var(--font-ui); fill: var(--text-muted); }
+.g-val { font: 12px var(--font-mono); font-variant-numeric: tabular-nums; fill: var(--text-muted); }
+.g-line { stroke: var(--border-strong); stroke-width: 1; stroke-dasharray: 4 4; }
+.g-line.base { stroke: var(--text-faint); stroke-dasharray: none; }
+.g-glyph { fill: rgba(230, 231, 234, 0.07); stroke: var(--text-muted); stroke-width: 1.25; fill-rule: evenodd; }
+.g-cap { font: 500 13px var(--font-ui); fill: var(--text); }
+.g-cap tspan { font-family: var(--font-mono); font-variant-numeric: tabular-nums; fill: var(--text-muted); font-weight: 400; }
+.m-thick { stroke: var(--accent); stroke-width: 1.5; }
+.m-thin { stroke: var(--cat-serif); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.m-tick { stroke-dasharray: none; }
+.t-thick { font: 500 12px var(--font-mono); fill: var(--accent); }
+.t-thin { font: 500 12px var(--font-mono); fill: var(--cat-serif); }
+.k-line { stroke: var(--text-faint); stroke-width: 1; stroke-dasharray: 4 4; }
+
+.placeholder { display: grid; place-content: center; gap: var(--sp-1); text-align: center; color: var(--text-muted); }
+.placeholder h2 { margin: 0; font-size: var(--fs-lg); font-weight: 600; color: var(--text); }
+.placeholder p { margin: 0; }
+
+/* right sidebar */
+.side { min-height: 0; overflow-y: auto; overscroll-behavior: contain; border-left: 1px solid var(--border); padding: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-6); }
+.side-sec { display: flex; flex-direction: column; gap: var(--sp-2); }
+.side-sec + .side-sec { border-top: 1px solid var(--border); padding-top: var(--sp-5); }
+.sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2); }
+.sec-title { margin: 0; font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.sec-count { font-size: var(--fs-xs); color: var(--text-muted); }
+.kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; margin: 0; }
+.kv dt, .kv dd { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.kv dt { color: var(--text-muted); }
+.kv dd { margin: 0; text-align: right; }
+.kv > :nth-last-child(-n + 2) { border-bottom: 0; }
+.kv .num-v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text); }
+.kv .unit { color: var(--text-muted); }
+.gq { color: var(--text); }
+.feats { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.feats li {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 var(--sp-2);
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text);
+}
+
+@media (max-width: 900px) {
+  .loaded { height: auto; }
+  .analysis { grid-template-columns: minmax(0, 1fr); }
+  .stage { overflow: visible; }
+  .canvas { height: auto; }
+  .chart svg { height: auto; }
+  .side { overflow: visible; border-left: 0; border-top: 1px solid var(--border); }
+  .sample-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0s !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="app-head" id="appHead">
+<header class="topnav">
+  <span class="brand">Font Analyzer</span>
+  <nav class="tabs" aria-label="Primary">
+    <a class="tab" href="index.html">Library</a>
+    <a class="tab" href="analyze.html" aria-current="page">Analyze</a>
+    <a class="tab" href="compare.html">Compare</a>
+  </nav>
+</header>
+</div>
+
+<main class="page">
+  <!-- Empty state -->
+  <section class="start" id="startState" aria-labelledby="startTitle">
+    <div class="start-head">
+      <h1 class="start-title" id="startTitle">Analyze a Font</h1>
+      <p class="start-sub">Upload a font file or select a sample.</p>
+    </div>
+
+    <label class="drop" id="drop">
+      <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5M5 15v3.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>
+      <span class="drop-main">Drop a font file here or <span class="drop-link">browse</span></span>
+      <span class="drop-hint">Supports OTF, TTF, WOFF, WOFF2</span>
+      <input class="sr" type="file" id="fileInput" accept=".otf,.ttf,.woff,.woff2">
+    </label>
+
+    <section class="samples" aria-labelledby="samplesTitle">
+      <h2 class="samples-title" id="samplesTitle">Or try a sample font</h2>
+      <div class="sample-grid">
+        <button type="button" class="sample" data-family="Lato">
+          <span class="sample-aa" style="font-family:'Lato',sans-serif" aria-hidden="true">Aa</span>
+          <span class="sample-name">Lato</span>
+          <span class="sample-cat"><span class="cat-dot" style="--c:var(--cat-sans)"></span>Sans-serif</span>
+        </button>
+        <button type="button" class="sample" data-family="Merriweather">
+          <span class="sample-aa" style="font-family:'Merriweather',serif" aria-hidden="true">Aa</span>
+          <span class="sample-name">Merriweather</span>
+          <span class="sample-cat"><span class="cat-dot" style="--c:var(--cat-serif)"></span>Serif</span>
+        </button>
+        <button type="button" class="sample" data-family="Fira Code">
+          <span class="sample-aa" style="font-family:'Fira Code',monospace" aria-hidden="true">Aa</span>
+          <span class="sample-name">Fira Code</span>
+          <span class="sample-cat"><span class="cat-dot" style="--c:var(--cat-mono)"></span>Monospace</span>
+        </button>
+        <button type="button" class="sample" data-family="Pacifico">
+          <span class="sample-aa" style="font-family:'Pacifico',cursive" aria-hidden="true">Aa</span>
+          <span class="sample-name">Pacifico</span>
+          <span class="sample-cat"><span class="cat-dot" style="--c:var(--cat-script)"></span>Handwriting</span>
+        </button>
+      </div>
+    </section>
+  </section>
+
+  <!-- Loaded state -->
+  <section class="loaded" id="loadedState" aria-labelledby="fontName" hidden>
+    <div class="font-head">
+      <button type="button" class="btn btn-ghost" id="changeFont">
+        <svg class="od-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+        Change font
+      </button>
+      <div class="font-id">
+        <h1 class="font-name" id="fontName" tabindex="-1">Merriweather</h1>
+        <p class="font-meta">Regular<span class="sep" aria-hidden="true">·</span><span class="mono">289</span> glyphs<span class="sep" aria-hidden="true">·</span><span class="mono">2000</span> UPM</p>
+      </div>
+      <div class="head-actions">
+        <button type="button" class="btn" data-export="JSON">Export JSON</button>
+        <button type="button" class="btn" data-export="Image">Export Image</button>
+      </div>
+    </div>
+
+    <div class="subtabs" role="tablist" aria-label="Analysis" id="subtabs">
+      <button type="button" class="subtab" role="tab" id="t-contrast" aria-controls="p-contrast" aria-selected="true">Contrast</button>
+      <button type="button" class="subtab" role="tab" id="t-xheight" aria-controls="p-xheight" aria-selected="false" tabindex="-1">X-Height</button>
+      <button type="button" class="subtab" role="tab" id="t-proportions" aria-controls="p-proportions" aria-selected="false" tabindex="-1">Proportions</button>
+      <button type="button" class="subtab" role="tab" id="t-weight" aria-controls="p-weight" aria-selected="false" tabindex="-1">Weight</button>
+      <button type="button" class="subtab" role="tab" id="t-spacing" aria-controls="p-spacing" aria-selected="false" tabindex="-1">Spacing</button>
+      <button type="button" class="subtab" role="tab" id="t-glyphs" aria-controls="p-glyphs" aria-selected="false" tabindex="-1">Glyphs</button>
+    </div>
+
+    <div class="analysis">
+      <div class="stage">
+        <div class="panel" role="tabpanel" id="p-contrast" aria-labelledby="t-contrast" tabindex="0">
+          <figure class="canvas" style="margin:0">
+            <div class="canvas-head">
+              <figcaption class="canvas-title">Stroke contrast · “o” and “O”</figcaption>
+              <ul class="legend" aria-label="Legend">
+                <li><svg viewBox="0 0 24 8" aria-hidden="true"><line x1="2" y1="4" x2="22" y2="4" class="m-thick"/><line x1="2" y1="1" x2="2" y2="7" class="m-thick"/><line x1="22" y1="1" x2="22" y2="7" class="m-thick"/></svg>Thickest stroke (solid)</li>
+                <li><svg viewBox="0 0 24 8" aria-hidden="true"><line x1="2" y1="4" x2="22" y2="4" class="m-thin"/><line x1="2" y1="1" x2="2" y2="7" class="m-thin m-tick"/><line x1="22" y1="1" x2="22" y2="7" class="m-thin m-tick"/></svg>Thinnest stroke (dashed)</li>
+                <li><svg viewBox="0 0 24 8" aria-hidden="true"><line x1="0" y1="4" x2="24" y2="4" class="k-line"/></svg>Metric line</li>
+              </ul>
+            </div>
+            <div class="chart">
+              <svg viewBox="0 0 1000 570" role="img" aria-labelledby="chartDesc">
+                <desc id="chartDesc">Glyphs o and O of Merriweather Regular on metric lines. Lowercase o: thickest stroke 232.2 units, thinnest 113.3 units, contrast 2.05 to 1. Capital O: thickest 241.0 units, thinnest 104.3 units, contrast 2.31 to 1.</desc>
+                <!-- scale: 0.2 px per font unit; baseline at y=443.6 -->
+                <g id="metrics"></g>
+
+                <!-- o: center y=332.2, outer rx105 ry115.4, inner rx58.56 ry92.74 -->
+                <path class="g-glyph" d="M275 332.2a105 115.4 0 1 0 210 0a105 115.4 0 1 0 -210 0ZM321.44 332.2a58.56 92.74 0 1 0 117.12 0a58.56 92.74 0 1 0 -117.12 0Z"/>
+                <!-- O: center y=295, outer rx135 ry153, inner rx86.8 ry132.14 -->
+                <path class="g-glyph" d="M565 295a135 153 0 1 0 270 0a135 153 0 1 0 -270 0ZM613.2 295a86.8 132.14 0 1 0 173.6 0a86.8 132.14 0 1 0 -173.6 0Z"/>
+
+                <text class="g-cap" x="380" y="26" text-anchor="middle">o <tspan dx="6">2.05:1</tspan></text>
+                <text class="g-cap" x="700" y="26" text-anchor="middle">O <tspan dx="6">2.31:1</tspan></text>
+
+                <!-- thickest markers (solid) -->
+                <g class="m-thick">
+                  <line x1="275" y1="332.2" x2="321.44" y2="332.2"/>
+                  <line x1="275" y1="325.2" x2="275" y2="339.2"/><line x1="321.44" y1="325.2" x2="321.44" y2="339.2"/>
+                  <line x1="565" y1="295" x2="613.2" y2="295"/>
+                  <line x1="565" y1="288" x2="565" y2="302"/><line x1="613.2" y1="288" x2="613.2" y2="302"/>
+                </g>
+                <text class="t-thick" x="265" y="336.2" text-anchor="end">232.2u</text>
+                <text class="t-thick" x="555" y="299" text-anchor="end">241.0u</text>
+
+                <!-- thinnest markers (dashed) -->
+                <g class="m-thin">
+                  <line x1="380" y1="424.94" x2="380" y2="447.6"/>
+                  <line x1="373" y1="424.94" x2="387" y2="424.94" class="m-tick"/><line x1="373" y1="447.6" x2="387" y2="447.6" class="m-tick"/>
+                  <line x1="700" y1="427.14" x2="700" y2="448"/>
+                  <line x1="693" y1="427.14" x2="707" y2="427.14" class="m-tick"/><line x1="693" y1="448" x2="707" y2="448" class="m-tick"/>
+                </g>
+                <text class="t-thin" x="380" y="470" text-anchor="middle">113.3u</text>
+                <text class="t-thin" x="700" y="470" text-anchor="middle">104.3u</text>
+              </svg>
+            </div>
+          </figure>
+        </div>
+
+        <div class="panel" role="tabpanel" id="p-xheight" aria-labelledby="t-xheight" tabindex="0" hidden>
+          <div class="canvas placeholder"><h2>X-Height analysis</h2><p>Not in this mock.</p></div>
+        </div>
+        <div class="panel" role="tabpanel" id="p-proportions" aria-labelledby="t-proportions" tabindex="0" hidden>
+          <div class="canvas placeholder"><h2>Proportions analysis</h2><p>Not in this mock.</p></div>
+        </div>
+        <div class="panel" role="tabpanel" id="p-weight" aria-labelledby="t-weight" tabindex="0" hidden>
+          <div class="canvas placeholder"><h2>Weight analysis</h2><p>Not in this mock.</p></div>
+        </div>
+        <div class="panel" role="tabpanel" id="p-spacing" aria-labelledby="t-spacing" tabindex="0" hidden>
+          <div class="canvas placeholder"><h2>Spacing analysis</h2><p>Not in this mock.</p></div>
+        </div>
+        <div class="panel" role="tabpanel" id="p-glyphs" aria-labelledby="t-glyphs" tabindex="0" hidden>
+          <div class="canvas placeholder"><h2>Glyphs view</h2><p>Not in this mock.</p></div>
+        </div>
+      </div>
+
+      <aside class="side" aria-label="Analysis details">
+        <section class="side-sec" aria-labelledby="h-results">
+          <h2 class="sec-title" id="h-results">Results</h2>
+          <dl class="kv">
+            <dt><span class="gq">“o”</span> contrast</dt><dd class="num-v">2.05:1</dd>
+            <dt><span class="gq">“o”</span> thickest</dt><dd class="num-v">232.2<span class="unit">u</span></dd>
+            <dt><span class="gq">“o”</span> thinnest</dt><dd class="num-v">113.3<span class="unit">u</span></dd>
+            <dt><span class="gq">“O”</span> contrast</dt><dd class="num-v">2.31:1</dd>
+            <dt><span class="gq">“O”</span> thickest</dt><dd class="num-v">241.0<span class="unit">u</span></dd>
+            <dt><span class="gq">“O”</span> thinnest</dt><dd class="num-v">104.3<span class="unit">u</span></dd>
+          </dl>
+        </section>
+        <section class="side-sec" aria-labelledby="h-info">
+          <h2 class="sec-title" id="h-info">Font info</h2>
+          <dl class="kv">
+            <dt>Family</dt><dd>Merriweather</dd>
+            <dt>Style</dt><dd>Regular</dd>
+            <dt>UPM</dt><dd class="num-v">2000</dd>
+            <dt>Ascender</dt><dd class="num-v">1968</dd>
+            <dt>Descender</dt><dd class="num-v">−546</dd>
+            <dt>Glyphs</dt><dd class="num-v">289</dd>
+          </dl>
+        </section>
+        <section class="side-sec" aria-labelledby="h-feat">
+          <div class="sec-head">
+            <h2 class="sec-title" id="h-feat">OpenType features</h2>
+            <span class="sec-count"><span class="mono">12</span> features</span>
+          </div>
+          <ul class="feats">
+            <li>calt</li><li>ccmp</li><li>dnom</li><li>frac</li><li>kern</li><li>liga</li>
+            <li>locl</li><li>mark</li><li>mkmk</li><li>numr</li><li>pnum</li><li>tnum</li>
+          </ul>
+        </section>
+      </aside>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+/* ───────────── Metric lines (font units → px) ───────────── */
+const SCALE = 0.2, BASE_Y = 443.6, X1 = 110, X2 = 890;
+const METRICS = [
+  ['Ascender', 1968], ['Cap height', 1486], ['x-height', 1114], ['Baseline', 0], ['Descender', -546],
+];
+function drawMetrics() {
+  const ns = 'http://www.w3.org/2000/svg';
+  const g = $('#metrics');
+  for (const [name, v] of METRICS) {
+    const y = BASE_Y - v * SCALE;
+    const line = document.createElementNS(ns, 'line');
+    Object.entries({ x1: X1, x2: X2, y1: y, y2: y, class: v === 0 ? 'g-line base' : 'g-line' })
+      .forEach(([k, val]) => line.setAttribute(k, val));
+    const label = document.createElementNS(ns, 'text');
+    Object.entries({ x: X1 - 10, y: y + 4, 'text-anchor': 'end', class: 'g-label' })
+      .forEach(([k, val]) => label.setAttribute(k, val));
+    label.textContent = name;
+    const val = document.createElementNS(ns, 'text');
+    Object.entries({ x: X2 + 10, y: y + 4, class: 'g-val' }).forEach(([k, v2]) => val.setAttribute(k, v2));
+    val.textContent = String(v).replace('-', '−');
+    g.append(line, label, val);
+  }
+}
+
+/* ───────────── Toast ───────────── */
+let toastTimer;
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.classList.add('is-on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('is-on'), 2200);
+}
+
+/* ───────────── State toggle (mock: any font → Merriweather Regular) ───────────── */
+function showLoaded() {
+  $('#startState').hidden = true;
+  $('#loadedState').hidden = false;
+  $('#fontName').focus();
+}
+function showStart() {
+  $('#loadedState').hidden = true;
+  $('#startState').hidden = false;
+  $('#fileInput').value = '';
+  $('#fileInput').focus();
+}
+
+$$('.sample').forEach((b) => b.addEventListener('click', showLoaded));
+$('#fileInput').addEventListener('change', (e) => { if (e.target.files.length) showLoaded(); });
+$('#changeFont').addEventListener('click', showStart);
+$$('[data-export]').forEach((b) => b.addEventListener('click', () => toast(`Export ${b.dataset.export} is not part of this mock.`)));
+
+const drop = $('#drop');
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('is-over'); });
+drop.addEventListener('dragleave', (e) => { if (!drop.contains(e.relatedTarget)) drop.classList.remove('is-over'); });
+drop.addEventListener('drop', (e) => {
+  e.preventDefault();
+  drop.classList.remove('is-over');
+  if (e.dataTransfer.files.length) showLoaded();
+});
+
+/* ───────────── Sub-tabs (roving tabindex, automatic activation) ───────────── */
+const tabs = $$('#subtabs [role="tab"]');
+function selectTab(tab) {
+  for (const t of tabs) {
+    const on = t === tab;
+    t.setAttribute('aria-selected', on);
+    t.tabIndex = on ? 0 : -1;
+    $('#' + t.getAttribute('aria-controls')).hidden = !on;
+  }
+  tab.focus();
+}
+const KEY_STEP = { ArrowRight: 1, ArrowLeft: -1 };
+$('#subtabs').addEventListener('click', (e) => { const t = e.target.closest('[role="tab"]'); if (t) selectTab(t); });
+$('#subtabs').addEventListener('keydown', (e) => {
+  const i = tabs.indexOf(document.activeElement);
+  if (i < 0) return;
+  let n = null;
+  if (e.key in KEY_STEP) n = (i + KEY_STEP[e.key] + tabs.length) % tabs.length;
+  if (e.key === 'Home') n = 0;
+  if (e.key === 'End') n = tabs.length - 1;
+  if (n === null) return;
+  e.preventDefault();
+  selectTab(tabs[n]);
+});
+
+drawMetrics();
+</script>
+</body>
+</html>

@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare · Font Analyzer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..600&family=Geist+Mono:wght@400..500&display=swap">
+<!-- Compared fonts (demo selection) -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400&family=Fraunces:opsz,wght@9..144,400&family=Roboto+Flex:opsz,wght@8..144,400&display=swap">
+<style>
+/* OD-LAYOUT-PRIMITIVES v1 — structure only: display, flex/grid, overflow, wrapping, ratio, geometry.
+   Put this @layer first; product CSS outside the layer wins ordinary layout rules.
+   Native hidden and closed-dialog states take precedence over component display rules. */
+@layer od-layout {
+  [hidden]:not([hidden="until-found" i]) { display: none !important; }
+  dialog:not([open]) { display: none !important; }
+
+  :where(.od-stack,.od-row,.od-row-top,.od-cluster,.od-grid,.od-field,.od-stat,.od-cell,.od-tile) > :where(*) { min-width: 0; }
+
+  .od-stack   { display: flex; flex-direction: column; gap: var(--od-gap, 8px); }
+  .od-row     { display: flex; align-items: center; gap: var(--od-gap, 8px); }
+  .od-row-top { display: flex; align-items: flex-start; gap: var(--od-gap, 8px); }
+  .od-cluster { display: flex; flex-wrap: wrap; align-items: center; gap: var(--od-gap, 8px); }
+  .od-fill    { flex: 1 1 0; min-width: 0; }
+  .od-fixed   { flex: none; }
+  .od-grid    { display: grid; gap: var(--od-gap, 12px); grid-template-columns: repeat(var(--od-cols, 3), minmax(0, 1fr)); }
+
+  .od-stat, .od-field, .od-cell { display: grid; gap: var(--od-gap, 2px); }
+  :where(.od-stat,.od-field,.od-cell) > :where(*) { display: block; }
+  .od-tile { display: grid; grid-template-rows: auto 1fr; }
+  :where(.od-tile) > :where(*) { display: block; }
+
+  .od-media { display: block; width: 100%; height: auto; aspect-ratio: var(--od-ratio, auto); }
+  .od-media-cover { object-fit: cover; }
+
+  .od-icon { display: inline-block; inline-size: var(--od-icon-size, 1em); block-size: var(--od-icon-size, 1em); flex: none; }
+
+  .od-truncate { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .od-clamp-2, .od-clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .od-clamp-2 { -webkit-line-clamp: 2; }
+  .od-clamp-3 { -webkit-line-clamp: 3; }
+  .od-lines-2 { min-height: calc(2 * 1.4em); }
+  .od-nowrap  { white-space: nowrap; }
+  .od-keep    { word-break: keep-all; overflow-wrap: anywhere; }
+
+  .od-screen { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; }
+  .od-scroll { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+
+  .od-rail { display: flex; gap: var(--od-gap, 8px); overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+             padding-inline: var(--od-rail-pad, 16px); scroll-padding-inline: var(--od-rail-pad, 16px); }
+  .od-rail::-webkit-scrollbar { display: none; }
+  :where(.od-rail) > :where(*) { flex: none; scroll-snap-align: start; }
+  :where(.od-rail) > :where(:last-child) { margin-inline-end: var(--od-rail-pad, 16px); }
+
+  .od-spacer { flex: none; visibility: hidden; pointer-events: none; }
+  .od-touch  { min-width: 44px; min-height: 44px; }
+}
+:root [hidden]:where(:not([hidden="until-found" i])) { display: none; }
+/* /OD-LAYOUT-PRIMITIVES v1 */
+
+/* ───────────── Design tokens (map 1:1 to Tailwind 4 @theme) ───────────── */
+:root {
+  color-scheme: dark;
+
+  /* surfaces — neutral near-black, no hue cast */
+  --bg: #0b0c0e;
+  --surface-1: #111215;
+  --surface-2: #17181c;
+  --surface-3: #1e2025;
+  --surface-4: #2a2d34;
+  --border: #22242a;
+  --border-strong: #31343b;
+
+  /* text */
+  --text: #e6e7ea;
+  --text-muted: #9b9fa8;
+  --text-faint: #6c7079; /* decorative ticks only — below 4.5:1 */
+
+  /* single restrained accent: interactive state only */
+  --accent: #8ea2f0;
+  --accent-line: rgba(142, 162, 240, 0.45);
+  --accent-soft: rgba(142, 162, 240, 0.14);
+  --accent-fill: #3f58c8;
+  --accent-fill-hover: #4a64d6;
+  --on-accent: #ffffff;
+
+  --star: #e3b955;
+
+  /* category hues — muted, used only as small dots */
+  --cat-sans: #7fae93;
+  --cat-serif: #c99486;
+  --cat-display: #a993cc;
+  --cat-script: #c9ac6e;
+  --cat-mono: #6fadb3;
+  --cat-slab: #a7a58a;
+  --cat-none: #4a4d55;
+
+  /* type */
+  --font-ui: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --fs-xs: 12px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-specimen: 56px;
+
+  /* spacing — 4px grid */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* shape */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-pill: 999px;
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+  /* motion */
+  --dur-in: 200ms;
+  --dur-out: 140ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+
+  /* layout */
+  --nav-h: 48px;
+  --sidebar-w: 288px;
+  --tile-min: 172px;
+  --ctl-h: 24px;
+  --head-h: 105px;        /* measured at runtime from .app-head */
+  --meta-h: 18px;         /* tile meta line: 12px × 1.5 */
+  --panel-reserve: 192px; /* room below the last grid row for the hover panel */
+}
+
+/* ───────────── Base ───────────── */
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font: var(--fs-md)/1.5 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* ───────────── Buttons & controls ───────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  height: 32px; padding: 0 var(--sp-3);
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--text);
+  font-size: var(--fs-md); font-weight: 500; white-space: nowrap;
+}
+.btn:hover { background: var(--surface-3); }
+.btn[aria-pressed="true"], .btn[aria-expanded="true"].is-toggle { background: var(--accent-soft); border-color: var(--accent-line); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--on-accent); }
+.btn-primary:hover { background: var(--accent-fill-hover); }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--text-muted); }
+.btn-ghost:hover { background: var(--surface-3); color: var(--text); }
+.btn-sm { height: 28px; padding: 0 var(--sp-2); font-size: var(--fs-xs); }
+.badge {
+  display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: var(--r-pill); background: var(--accent-fill); color: var(--on-accent);
+  font-size: var(--fs-xs); font-weight: 600;
+}
+.icon-btn {
+  display: inline-grid; place-items: center; width: 28px; height: 28px;
+  border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-muted);
+}
+.icon-btn:hover { background: var(--surface-3); color: var(--text); }
+
+/* segmented control (radio-based or button-based) */
+.seg {
+  display: inline-flex; padding: 2px; gap: 2px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-sm);
+}
+.seg label { position: relative; display: block; }
+.seg input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.seg span, .seg button {
+  display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 var(--sp-3);
+  border: 0; border-radius: 3px; background: transparent; color: var(--text-muted);
+  font-size: var(--fs-md); white-space: nowrap;
+}
+.seg button { padding: 0 var(--sp-2); }
+.seg span:hover, .seg button:hover { color: var(--text); }
+.seg input:checked + span, .seg button[aria-pressed="true"] { background: var(--surface-4); color: var(--text); }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* filter chips (checkbox-based) */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { position: relative; display: block; }
+.chip input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.chip input + span {
+  display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 var(--sp-3);
+  border: 1px solid var(--border-strong); border-radius: var(--r-pill);
+  color: var(--text-muted); font-size: var(--fs-md); white-space: nowrap;
+}
+.chip-sm input + span { height: 24px; padding: 0 10px; font-size: var(--fs-xs); }
+.chip input + span:hover { color: var(--text); border-color: var(--surface-4); }
+.chip input:checked + span { background: var(--accent-soft); border-color: var(--accent-line); color: var(--text); }
+.chip input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.cat-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--cat-none)); flex: none; }
+
+/* sliders */
+.slider {
+  --p: 50%;
+  appearance: none; -webkit-appearance: none;
+  width: 100%; height: var(--ctl-h); margin: 0; background: transparent;
+}
+.slider::-webkit-slider-runnable-track { height: 2px; border-radius: 2px; background: linear-gradient(to right, var(--text-muted) var(--p), var(--surface-4) var(--p)); }
+.slider::-moz-range-track { height: 2px; border-radius: 2px; background: linear-gradient(to right, var(--text-muted) var(--p), var(--surface-4) var(--p)); }
+.slider::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -5px; border: 0; border-radius: 50%; background: var(--text); }
+.slider::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: var(--text); }
+.slider:focus-visible { outline: none; }
+.slider:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--accent); }
+.slider:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 3px var(--accent); }
+
+.select {
+  height: var(--ctl-h); padding: 0 4px; min-width: 0;
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  background: var(--surface-1); color: var(--text); font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+}
+.num {
+  width: 100%; height: 30px; padding: 0 var(--sp-2);
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  background: var(--surface-1); color: var(--text); font-family: var(--font-mono); font-size: var(--fs-md);
+}
+.num::placeholder { color: var(--text-muted); }
+
+/* ───────────── Sticky app head (nav + toolbar) ───────────── */
+.app-head { position: sticky; top: 0; z-index: 20; background: var(--bg); }
+
+/* ───────────── Top nav ───────────── */
+.topnav {
+  display: flex; align-items: center; gap: var(--sp-6);
+  height: var(--nav-h); padding: 0 var(--sp-5);
+  border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 600; font-size: var(--fs-md); letter-spacing: -0.01em; }
+.tabs { display: flex; gap: var(--sp-1); }
+.tab {
+  display: flex; align-items: center; height: 30px; padding: 0 var(--sp-3);
+  border-radius: var(--r-sm); color: var(--text-muted); text-decoration: none; font-size: var(--fs-md);
+}
+.tab:hover { color: var(--text); background: var(--surface-2); }
+.tab[aria-current="page"] { color: var(--text); background: var(--surface-3); }
+.check { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-md); cursor: pointer; }
+.check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent-fill); }
+
+
+/* ───────────── Compare: font colors (one per compared font, max 5) ─────────────
+   Muted hues, each above 6:1 on --bg. Used for canvas text, guides, and dots only. */
+:root {
+  --font-1: #7fae93;
+  --font-2: #d09a8b;
+  --font-3: #a993cc;
+  --font-4: #c9ac6e;
+  --font-5: #6fadb3;
+
+  --panel-w: 320px;
+  --rail-w: 44px;
+}
+
+/* ───────────── Compare: page frame ───────────── */
+body.page { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: 100dvh; min-height: 0; }
+.page-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3);
+  min-height: 56px; padding: var(--sp-3) var(--sp-5);
+  border-bottom: 1px solid var(--border);
+}
+.page-title { margin: 0; font-size: var(--fs-lg); font-weight: 600; letter-spacing: -0.01em; }
+.page-head .grow { flex: 1; }
+.mock-label { font-size: var(--fs-xs); color: var(--text-muted); }
+
+/* ───────────── Compare: loaded layout ───────────── */
+.cmp { display: flex; min-height: 0; min-width: 0; }
+.canvas {
+  flex: 1; min-width: 0; overflow: auto;
+  display: flex; flex-direction: column; gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5) var(--sp-6);
+}
+.canvas-cap { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-4); margin: 0; font-size: var(--fs-xs); color: var(--text-muted); }
+.canvas-cap .lg { display: inline-flex; align-items: center; gap: 6px; }
+.stage { display: block; margin: auto; flex: none; }
+.stage .g-label { font: 12px var(--font-mono); fill: var(--text-muted); }
+.stage .g-val { font: 12px var(--font-mono); fill: var(--text-faint); }
+
+/* right panel */
+.panel {
+  position: relative; flex: none; display: flex; flex-direction: column; min-height: 0;
+  width: var(--panel-w);
+  background: var(--surface-1); border-left: 1px solid var(--border);
+}
+.panel.is-collapsed { width: var(--rail-w); }
+.panel-head {
+  display: flex; align-items: center; gap: var(--sp-2); flex: none;
+  height: 44px; padding: 0 var(--sp-2) 0 var(--sp-4);
+  border-bottom: 1px solid var(--border);
+}
+.panel-title { flex: 1; margin: 0; font-size: var(--fs-md); font-weight: 600; }
+.panel.is-collapsed .panel-head { padding: 0; justify-content: center; border-bottom: 0; }
+.panel.is-collapsed .panel-title { display: none; }
+.panel.is-collapsed .collapse-ico { transform: rotate(180deg); }
+.collapse-ico { --od-icon-size: 16px; }
+.panel-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-6); }
+
+.handle {
+  position: absolute; z-index: 2; top: 0; bottom: 0; left: -5px; width: 9px;
+  cursor: col-resize; touch-action: none;
+}
+.handle::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: transparent; transition: background var(--dur-out) var(--ease-in); }
+.handle:hover::after, .handle.is-drag::after { background: var(--accent-line); width: 2px; left: 3px; }
+.handle:focus-visible { outline: none; }
+.handle:focus-visible::after { background: var(--accent); width: 2px; left: 3px; }
+body.is-resizing { cursor: col-resize; user-select: none; }
+
+/* panel sections */
+.sec { display: grid; gap: var(--sp-2); }
+.sec-title { margin: 0; font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); }
+.sec-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.text-in {
+  width: 100%; height: 32px; padding: 0 var(--sp-2);
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  background: var(--bg); color: var(--text); font-size: var(--fs-md);
+}
+.text-in:focus { border-color: var(--accent-line); }
+
+.switch { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); font-size: var(--fs-md); cursor: pointer; }
+.switch input {
+  appearance: none; -webkit-appearance: none; position: relative; flex: none;
+  width: 32px; height: 18px; margin: 0; border-radius: var(--r-pill);
+  background: var(--surface-4); cursor: pointer;
+  transition: background var(--dur-in) var(--ease-out);
+}
+.switch input::before {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+  border-radius: 50%; background: var(--text-muted);
+  transition: transform var(--dur-in) var(--ease-out), background var(--dur-in) var(--ease-out);
+}
+.switch input:checked { background: var(--accent-fill); }
+.switch input:checked::before { transform: translateX(14px); background: var(--on-accent); }
+.hint { margin: 0; font-size: var(--fs-xs); color: var(--text-muted); }
+
+.font-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.font-list .check { min-height: 32px; padding: 0 var(--sp-2); margin: 0 calc(-1 * var(--sp-2)); border-radius: var(--r-sm); }
+.font-list .check:hover { background: var(--surface-2); }
+.font-list .fam { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.font-list .sty { font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
+
+.mtable { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--fs-xs); }
+.mtable th, .mtable td { padding: 6px 0 6px 8px; border-bottom: 1px solid var(--border); }
+.mtable thead th { vertical-align: bottom; color: var(--text); font-weight: 500; text-align: right; }
+.mtable thead th:first-child, .mtable tbody th { text-align: left; color: var(--text-muted); font-weight: 400; padding-left: 0; }
+.mtable col.c-metric { width: 68px; }
+.mtable .h-font { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 100%; }
+.mtable .h-font span:last-child { max-width: 100%; white-space: normal; line-height: 1.3; }
+.mtable td { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mtable .is-off { opacity: 0.35; }
+
+/* ───────────── Compare: empty state ───────────── */
+.empty-state { display: grid; place-content: center; justify-items: center; gap: var(--sp-2); padding: 64px var(--sp-5); text-align: center; }
+.empty-ico { --od-icon-size: 40px; color: var(--text-faint); margin-bottom: var(--sp-2); }
+.empty-state h2 { margin: 0; font-size: var(--fs-lg); font-weight: 500; }
+.empty-state p { margin: 0; max-width: 40ch; color: var(--text-muted); }
+.empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--sp-2); margin-top: var(--sp-3); }
+a.btn { text-decoration: none; }
+
+/* ───────────── Compare: responsive ───────────── */
+@media (max-width: 768px) {
+  body.page { height: auto; min-height: 100dvh; }
+  .topnav, .page-head { padding-inline: var(--sp-4); }
+  .cmp { flex-direction: column; }
+  .canvas { flex: none; min-height: 320px; padding-inline: var(--sp-4); }
+  .panel, .panel.is-collapsed { width: auto; border-left: 0; border-top: 1px solid var(--border); }
+  .panel.is-collapsed .panel-head { justify-content: flex-start; padding: 0 var(--sp-2) 0 var(--sp-4); }
+  .panel.is-collapsed .panel-title { display: block; }
+  .handle { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0s !important; animation: none !important; }
+}
+</style>
+</head>
+<body class="page">
+
+<div class="app-head" id="appHead">
+<header class="topnav">
+  <span class="brand">Font Analyzer</span>
+  <nav class="tabs" aria-label="Primary">
+    <a class="tab" href="index.html">Library</a>
+    <a class="tab" href="analyze.html">Analyze</a>
+    <a class="tab" href="compare.html" aria-current="page">Compare</a>
+  </nav>
+</header>
+</div>
+
+<div class="page-head">
+  <h1 class="page-title" id="pageTitle">Comparing 3 fonts</h1>
+  <span class="grow"></span>
+  <span class="mock-label" id="mockLbl">Mock state</span>
+  <div class="seg" role="group" aria-labelledby="mockLbl">
+    <button type="button" data-state="loaded" aria-pressed="true">Loaded</button>
+    <button type="button" data-state="empty" aria-pressed="false">Empty</button>
+  </div>
+  <button class="btn btn-sm" id="clearBtn">Clear</button>
+</div>
+
+<main class="cmp" id="loaded">
+  <section class="canvas" id="canvas" aria-label="Overlay canvas">
+    <p class="canvas-cap" id="canvasCap"></p>
+    <svg class="stage" id="stage" role="img" aria-labelledby="stageDesc"><desc id="stageDesc"></desc></svg>
+  </section>
+
+  <aside class="panel" id="panel" aria-label="Compare settings">
+    <div class="handle" id="handle" role="separator" tabindex="0" aria-orientation="vertical"
+         aria-label="Resize settings panel" aria-controls="panel" aria-valuemin="260" aria-valuemax="520" aria-valuenow="320"></div>
+    <div class="panel-head">
+      <h2 class="panel-title">Settings</h2>
+      <button class="icon-btn" id="collapseBtn" aria-expanded="true" aria-controls="panelBody" aria-label="Settings panel">
+        <svg class="od-icon collapse-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 7l5 5-5 5"/><path d="M19 5v14"/></svg>
+      </button>
+    </div>
+    <div class="panel-body" id="panelBody">
+      <section class="sec">
+        <label class="sec-title" for="sample">Sample text</label>
+        <input class="text-in" id="sample" type="text" value="Hamburgefonstiv" autocomplete="off" spellcheck="false">
+      </section>
+
+      <section class="sec">
+        <div class="sec-head">
+          <label class="sec-title" for="size">Size</label>
+          <output class="ctl-val" id="sizeVal" for="size">120 px</output>
+        </div>
+        <input class="slider" id="size" type="range" min="24" max="240" step="1" value="120">
+      </section>
+
+      <section class="sec">
+        <label class="switch">Normalize x-height <input type="checkbox" role="switch" id="norm"></label>
+        <p class="hint" id="normHint">Scales each font to the x-height of the first visible font.</p>
+      </section>
+
+      <section class="sec" aria-labelledby="fontsTitle">
+        <h3 class="sec-title" id="fontsTitle">Fonts</h3>
+        <ul class="font-list" id="fontList"></ul>
+      </section>
+
+      <section class="sec" aria-labelledby="metricsTitle">
+        <h3 class="sec-title" id="metricsTitle">Metrics <span style="font-weight:400">(font units)</span></h3>
+        <table class="mtable" id="mtable"></table>
+      </section>
+    </div>
+  </aside>
+</main>
+
+<main class="empty-state" id="empty" hidden>
+  <svg class="od-icon empty-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" aria-hidden="true"><path d="M3 18h18M3 6h18" stroke-dasharray="2 2"/><path d="M6 18l3.5-10L13 18M7.3 14.5h4.4M15 18v-6m0 1.2c.6-1 1.5-1.4 2.5-1.4 1.6 0 2.5 1.2 2.5 3.1S19.1 18 17.5 18c-1 0-1.9-.4-2.5-1.4"/></svg>
+  <h2>No fonts selected for comparison</h2>
+  <p>Go to the Library, select 2–5 fonts, and click Compare.</p>
+  <div class="empty-actions">
+    <a class="btn btn-primary" href="index.html">Open Library</a>
+    <button class="btn btn-ghost" id="demoBtn">Load demo selection</button>
+  </div>
+</main>
+
+<script>
+/* ───────────── Data (mock metrics, font units) ───────────── */
+const FONTS = [
+  { id: 'alexandria', family: 'Alexandria', short: 'Alexandria', style: 'Regular', vf: true, color: 'var(--font-1)', upm: 1000, xh: 520, cap: 700, asc: 1050, desc: -300, glyphs: 714 },
+  { id: 'fraunces', family: 'Fraunces', short: 'Fraunces', style: 'Regular', vf: true, color: 'var(--font-2)', upm: 2000, xh: 940, cap: 1410, asc: 1956, desc: -510, glyphs: 1084 },
+  { id: 'roboto-flex', family: 'Roboto Flex', short: 'Roboto Flex', style: 'Regular', vf: true, color: 'var(--font-3)', upm: 2000, xh: 1082, cap: 1456, asc: 1900, desc: -500, glyphs: 1236 },
+];
+const GUIDES = [['asc', 'Ascender'], ['cap', 'Cap height'], ['xh', 'x-height'], ['base', 'Baseline'], ['desc', 'Descender']];
+const ROWS = [['upm', 'UPM'], ['xh', 'x-height'], ['cap', 'Cap height'], ['asc', 'Ascender'], ['desc', 'Descender'], ['glyphs', 'Glyphs']];
+const PANEL = { min: 260, max: 520, step: 16 };
+const state = { shown: new Set(FONTS.map((f) => f.id)), panelW: 320 };
+
+const $ = (s) => document.querySelector(s);
+const SVGNS = 'http://www.w3.org/2000/svg';
+const fmt = (n) => (n < 0 ? `−${Math.abs(n)}` : String(n));
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const dot = (f) => `<span class="cat-dot" style="--c:${f.color}" aria-hidden="true"></span>`;
+
+/* ───────────── Canvas ───────────── */
+const GUT = 120;   // left gutter for guide labels
+const PAD = 28;    // vertical padding inside the stage
+const LABEL_GAP = 14;
+
+function el(tag, attrs, text) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+/* px per font unit for each visible font */
+function scales(list, size, norm) {
+  const ref = list[0];
+  return list.map((f) => {
+    const k = size / f.upm;
+    if (!norm || !ref) return k;
+    return k * ((ref.xh / ref.upm) / (f.xh / f.upm));
+  });
+}
+
+/* push labels down so that no two labels overlap */
+function spreadLabels(items) {
+  items.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < items.length; i++) {
+    items[i].ly = Math.max(items[i].y, items[i - 1].ly + LABEL_GAP);
+  }
+  return items;
+}
+
+function drawGuides(svg, list, ks, base, W) {
+  list.forEach((f, i) => {
+    for (const key of ['asc', 'cap', 'xh', 'desc']) {
+      const y = Math.round(base - f[key] * ks[i]) + 0.5;
+      svg.append(el('line', { x1: GUT, x2: W, y1: y, y2: y, style: `stroke:${f.color}`, 'stroke-opacity': 0.55, 'stroke-dasharray': '4 4' }));
+      svg.append(el('line', { x1: GUT - 12, x2: GUT - 2, y1: y, y2: y, style: `stroke:${f.color}`, 'stroke-width': 2 }));
+    }
+  });
+  svg.append(el('line', { x1: GUT - 12, x2: W, y1: base + 0.5, y2: base + 0.5, style: 'stroke:var(--text-muted)', 'stroke-opacity': 0.7 }));
+}
+
+function drawLabels(svg, ref, k, base) {
+  const items = GUIDES.map(([key, name]) => {
+    const y = key === 'base' ? base : base - ref[key] * k;
+    return { name, y, ly: y };
+  });
+  for (const it of spreadLabels(items)) {
+    svg.append(el('text', { class: 'g-label', x: 0, y: it.ly, 'dominant-baseline': 'middle' }, it.name));
+  }
+}
+
+function render() {
+  const svg = $('#stage');
+  const list = FONTS.filter((f) => state.shown.has(f.id));
+  const size = +$('#size').value;
+  const norm = $('#norm').checked;
+  const text = $('#sample').value || ' ';
+  svg.replaceChildren(el('desc', { id: 'stageDesc' }, `“${text}” at ${size}px in ${list.map((f) => f.family).join(', ') || 'no fonts'}`));
+  renderCaption(list, norm);
+  if (!list.length) { svg.setAttribute('width', 1); svg.setAttribute('height', 1); return; }
+
+  const ks = scales(list, size, norm);
+  const top = Math.max(...list.map((f, i) => f.asc * ks[i]));
+  const bottom = Math.max(...list.map((f, i) => -f.desc * ks[i]));
+  const base = Math.round(PAD + top);
+  const H = Math.ceil(base + bottom + PAD);
+
+  const texts = list.map((f, i) => el('text', {
+    x: GUT + 16, y: base,
+    style: `fill:${f.color};font-family:'${f.family}';font-size:${(f.upm * ks[i]).toFixed(2)}px`,
+    'fill-opacity': 0.72,
+  }, text));
+  svg.append(...texts);
+  const textW = Math.max(...texts.map((t) => t.getComputedTextLength()));
+  const avail = $('#canvas').clientWidth - 40;
+  const W = Math.ceil(Math.max(avail, GUT + 16 + textW + 24));
+
+  svg.setAttribute('width', W);
+  svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const frag = el('g', {});
+  drawGuides(frag, list, ks, base, W);
+  drawLabels(frag, list[0], ks[0], base);
+  svg.insertBefore(frag, texts[0]);
+}
+
+function renderCaption(list, norm) {
+  const legend = list.map((f) => `<span class="lg">${dot(f)}${esc(f.family)}</span>`).join('');
+  const ref = list[0] ? `Labels show ${esc(list[0].family)}. Ticks mark each font.` : 'No fonts visible. Turn on a font in the panel.';
+  $('#canvasCap').innerHTML = `${legend}<span>${ref}${norm && list[0] ? ' x-height normalized.' : ''}</span>`;
+}
+
+/* ───────────── Panel content ───────────── */
+function renderFontList() {
+  $('#fontList').innerHTML = FONTS.map((f) => `
+    <li><label class="check">
+      <input type="checkbox" data-font="${f.id}" ${state.shown.has(f.id) ? 'checked' : ''}>
+      ${dot(f)}<span class="fam">${esc(f.family)}</span>
+      <span class="sty">${f.style}${f.vf ? ' · Variable' : ''}</span>
+    </label></li>`).join('');
+}
+
+function renderTable() {
+  const off = (f) => (state.shown.has(f.id) ? '' : ' class="is-off"');
+  const head = FONTS.map((f) => `<th scope="col"${off(f)} title="${esc(f.family)}"><span class="h-font">${dot(f)}<span>${esc(f.short)}</span></span></th>`).join('');
+  const body = ROWS.map(([key, name]) => `<tr><th scope="row">${name}</th>${FONTS.map((f) => `<td${off(f)}>${fmt(f[key])}</td>`).join('')}</tr>`).join('');
+  $('#mtable').innerHTML = `<colgroup><col class="c-metric">${FONTS.map(() => '<col>').join('')}</colgroup><thead><tr><th scope="col">Metric</th>${head}</tr></thead><tbody>${body}</tbody>`;
+}
+
+function syncSize() {
+  const s = $('#size');
+  s.style.setProperty('--p', `${((s.value - s.min) / (s.max - s.min)) * 100}%`);
+  $('#sizeVal').textContent = `${s.value} px`;
+}
+
+$('#sample').addEventListener('input', render);
+$('#size').addEventListener('input', () => { syncSize(); render(); });
+$('#norm').addEventListener('change', render);
+$('#fontList').addEventListener('change', (e) => {
+  const id = e.target.dataset.font;
+  if (!id) return;
+  if (e.target.checked) state.shown.add(id); else state.shown.delete(id);
+  renderTable();
+  render();
+});
+
+/* ───────────── Panel collapse + resize ───────────── */
+function setPanelW(w) {
+  state.panelW = Math.round(Math.min(PANEL.max, Math.max(PANEL.min, w)));
+  document.documentElement.style.setProperty('--panel-w', `${state.panelW}px`);
+  $('#handle').setAttribute('aria-valuenow', state.panelW);
+}
+
+$('#collapseBtn').addEventListener('click', () => {
+  const open = $('#panelBody').hidden;
+  $('#panelBody').hidden = !open;
+  $('#handle').hidden = !open;
+  $('#panel').classList.toggle('is-collapsed', !open);
+  $('#collapseBtn').setAttribute('aria-expanded', open);
+});
+
+const handle = $('#handle');
+handle.addEventListener('pointerdown', (e) => {
+  handle.setPointerCapture(e.pointerId);
+  handle.classList.add('is-drag');
+  document.body.classList.add('is-resizing');
+});
+handle.addEventListener('pointermove', (e) => {
+  if (!handle.hasPointerCapture(e.pointerId)) return;
+  setPanelW($('#panel').getBoundingClientRect().right - e.clientX);
+});
+handle.addEventListener('lostpointercapture', () => {
+  handle.classList.remove('is-drag');
+  document.body.classList.remove('is-resizing');
+});
+const KEYS = { ArrowLeft: PANEL.step, ArrowRight: -PANEL.step };
+handle.addEventListener('keydown', (e) => {
+  if (e.key === 'Home') setPanelW(PANEL.min);
+  else if (e.key === 'End') setPanelW(PANEL.max);
+  else if (e.key in KEYS) setPanelW(state.panelW + KEYS[e.key]);
+  else return;
+  e.preventDefault();
+});
+
+/* ───────────── Mock state: loaded / empty ───────────── */
+function setState(name) {
+  const empty = name === 'empty';
+  $('#loaded').hidden = empty;
+  $('#empty').hidden = !empty;
+  $('#clearBtn').hidden = empty;
+  $('#pageTitle').textContent = empty ? 'Compare' : `Comparing ${FONTS.length} fonts`;
+  document.querySelectorAll('[data-state]').forEach((b) => b.setAttribute('aria-pressed', b.dataset.state === name));
+  if (!empty) render();
+}
+document.querySelectorAll('[data-state]').forEach((b) => b.addEventListener('click', () => setState(b.dataset.state)));
+$('#clearBtn').addEventListener('click', () => { setState('empty'); $('#demoBtn').focus(); });
+$('#demoBtn').addEventListener('click', () => { setState('loaded'); $('#sample').focus(); });
+
+/* ───────────── Init ───────────── */
+syncSize();
+renderFontList();
+renderTable();
+setState(new URLSearchParams(location.search).has('empty') ? 'empty' : 'loaded');
+new ResizeObserver(() => { if (!$('#loaded').hidden) render(); }).observe($('#canvas'));
+document.fonts.ready.then(() => { if (!$('#loaded').hidden) render(); });
+</script>
+</body>
+</html>
