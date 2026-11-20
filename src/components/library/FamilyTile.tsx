@@ -4,6 +4,7 @@ import type { ResolvedCategory } from '../../lib/extendedTags';
 import { uniqueSortedWeights } from '../../lib/fontFamilies';
 import { useFontFace } from '../../lib/useFontFace';
 import { getAxisInfo } from '../../lib/axisDescriptions';
+import { pctOf } from '../../lib/format';
 import { CAT_COLOR, CAT_LABELS, catKeyOf, type CatKey } from '../../lib/libraryFilters';
 import {
   compareGroups, familyFaces, styleName, stylePool, variationSettings,
@@ -32,7 +33,6 @@ export interface FamilyTileProps {
 
 const SOURCE_LABEL = { local: 'Local', google: 'Google', both: 'Local + Google' };
 
-const pct = (v: number, min: number, max: number) => `${((v - min) / (max - min || 1)) * 100}%`;
 const axisStep = (a: VariableAxis) => (a.maxValue - a.minValue > 10 ? 1 : 0.01);
 const fmtAxis = (a: VariableAxis, v: number) => (axisStep(a) < 1 ? v.toFixed(2) : String(Math.round(v)));
 const axisName = (a: VariableAxis) => `${getAxisInfo(a.tag, a.name).name} · ${a.tag}`;
@@ -58,7 +58,7 @@ function Slider({ min, max, step, value, label, valueText, onChange }: {
   return (
     <input
       className="slider" type="range" min={min} max={max} step={step} value={value}
-      style={{ '--p': pct(value, min, max) } as CSSProperties}
+      style={{ '--p': pctOf(value, min, max) } as CSSProperties}
       aria-label={label} aria-valuetext={valueText}
       onChange={(e) => onChange(Number(e.target.value))}
     />

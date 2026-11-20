@@ -1,14 +1,11 @@
 import type { CSSProperties, Dispatch, ReactNode, SetStateAction } from 'react';
 import type { FontData, VariableAxis } from '../../types';
 import { getAxisInfo } from '../../lib/axisDescriptions';
+import { pctOf, signedInt } from '../../lib/format';
 import { OTF_FEATURE_NAMES } from '../../lib/otfFeatures';
 
 export interface Stat { label: string; value: string }
 export interface RawMetaSection { title: string; entries: { label: string; value: string }[] }
-
-const MINUS = '−';
-const signed = (n: number) => (n < 0 ? `${MINUS}${Math.abs(n)}` : String(n));
-const pct = (v: number, a: VariableAxis) => `${((v - a.minValue) / (a.maxValue - a.minValue || 1)) * 100}%`;
 
 function Section({ id, title, count, children }: { id: string; title: string; count?: string; children: ReactNode }) {
   return (
@@ -43,7 +40,7 @@ function AxisControls({ axes, values, setValues, previewFamily }: {
             </div>
             <input
               className="slider" type="range" min={a.minValue} max={a.maxValue} step={fine ? 0.01 : 1} value={v}
-              style={{ '--p': pct(v, a) } as CSSProperties}
+              style={{ '--p': pctOf(v, a.minValue, a.maxValue) } as CSSProperties}
               aria-label={`${info.name} (${a.tag})`}
               onChange={(e) => setValues((prev) => ({ ...prev, [a.tag]: Number(e.target.value) }))}
             />
@@ -77,8 +74,8 @@ export function AnalysisSide({ stats, fontData, filePath, axes, axisValues, setA
     ['Family', fontData.familyName, false],
     ['Style', fontData.styleName, false],
     ['UPM', String(fontData.unitsPerEm), true],
-    ['Ascender', signed(fontData.ascender), true],
-    ['Descender', signed(fontData.descender), true],
+    ['Ascender', signedInt(fontData.ascender), true],
+    ['Descender', signedInt(fontData.descender), true],
     ['Glyphs', String(fontData.glyphCount), true],
   ];
   if (filePath) info.push(['File', filePath, false]);

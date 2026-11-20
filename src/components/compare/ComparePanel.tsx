@@ -1,11 +1,10 @@
 import { useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
+import { signedInt } from '../../lib/format';
 import { Icon } from '../ui/Icon';
 import type { ComparedFont } from './types';
 
 const PANEL = { min: 260, max: 520, step: 16, initial: 320 };
 
-const MINUS = '−';
-const fmt = (n: number) => (n < 0 ? `${MINUS}${Math.abs(n)}` : String(Math.round(n)));
 const ROWS: [keyof ComparedFont, string][] = [['upm', 'UPM'], ['xh', 'x-height'], ['cap', 'Cap height'], ['asc', 'Ascender'], ['desc', 'Descender'], ['glyphs', 'Glyphs']];
 const KEYS: Record<string, number> = { ArrowLeft: PANEL.step, ArrowRight: -PANEL.step };
 
@@ -37,7 +36,7 @@ function MetricsTable({ fonts, hidden }: { fonts: ComparedFont[]; hidden: Set<st
         {ROWS.map(([key, name]) => (
           <tr key={key}>
             <th scope="row">{name}</th>
-            {fonts.map((f) => <td key={f.key} className={off(f)}>{fmt(f[key] as number)}</td>)}
+            {fonts.map((f) => <td key={f.key} className={off(f)}>{signedInt(f[key] as number)}</td>)}
           </tr>
         ))}
       </tbody>
