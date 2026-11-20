@@ -14,19 +14,34 @@ function tracePath(ctx: CanvasRenderingContext2D, commands: PathCommand[]) {
   }
 }
 
+/** Optional look of a glyph: a light fill plus an outline, as in the Analyze mock. */
+export interface GlyphOutline {
+  fill: string;
+  stroke: string;
+}
+
 export function drawGlyph(
   ctx: CanvasRenderingContext2D,
   glyph: Glyph,
   x: number,
   y: number,
   fontSize: number,
+  outline?: GlyphOutline,
 ) {
   const path = glyph.getPath(x, y, fontSize);
   ctx.save();
-  ctx.globalAlpha = GLYPH_ALPHA;
-  ctx.fillStyle = GLYPH_FILL;
   tracePath(ctx, path.commands);
-  ctx.fill();
+  if (outline) {
+    ctx.fillStyle = outline.fill;
+    ctx.fill('evenodd');
+    ctx.strokeStyle = outline.stroke;
+    ctx.lineWidth = 1.25;
+    ctx.stroke();
+  } else {
+    ctx.globalAlpha = GLYPH_ALPHA;
+    ctx.fillStyle = GLYPH_FILL;
+    ctx.fill();
+  }
   ctx.restore();
 }
 

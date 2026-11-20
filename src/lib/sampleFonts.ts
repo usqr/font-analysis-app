@@ -4,21 +4,26 @@ export const SAMPLE_FONTS: SampleFont[] = [
   {
     name: 'Lato',
     category: 'sans-serif',
-    path: '/fonts/Lato-Regular.ttf',
+    path: 'fonts/Lato-Regular.ttf',
   },
   {
     name: 'Merriweather',
     category: 'serif',
-    path: '/fonts/Merriweather-Regular.ttf',
+    path: 'fonts/Merriweather-Regular.ttf',
   },
   {
     name: 'Fira Code',
     category: 'monospace',
-    path: '/fonts/FiraCode-Regular.ttf',
+    path: 'fonts/FiraCode-Regular.ttf',
   },
   {
     name: 'Pacifico',
     category: 'handwriting',
-    path: '/fonts/Pacifico-Regular.ttf',
+    path: 'fonts/Pacifico-Regular.ttf',
   },
 ];
+
+/** URL of a sample font. The path is relative to the app base, so it also works on GitHub Pages. */
+export function sampleFontUrl(sample: SampleFont): string {
+  return `${import.meta.env.BASE_URL}${sample.path}`;
+}

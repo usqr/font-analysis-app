@@ -1,0 +1,85 @@
+/* Design tokens from the OpenDesign mocks (design/library-redesign). */
+:root {
+  color-scheme: dark;
+
+  /* surfaces: neutral near-black, no hue cast */
+  --bg: #0b0c0e;
+  --surface-1: #111215;
+  --surface-2: #17181c;
+  --surface-3: #1e2025;
+  --surface-4: #2a2d34;
+  --border: #22242a;
+  --border-strong: #31343b;
+
+  /* text */
+  --text: #e6e7ea;
+  --text-muted: #9b9fa8;
+  --text-faint: #6c7079; /* decorative ticks only: below 4.5:1 */
+
+  /* one restrained accent: interactive state only */
+  --accent: #8ea2f0;
+  --accent-line: rgba(142, 162, 240, 0.45);
+  --accent-soft: rgba(142, 162, 240, 0.14);
+  --accent-fill: #3f58c8;
+  --accent-fill-hover: #4a64d6;
+  --on-accent: #ffffff;
+  --danger: #e5847a;
+
+  --star: #e3b955;
+
+  /* category hues: muted, used only as small dots */
+  --cat-sans: #7fae93;
+  --cat-serif: #c99486;
+  --cat-display: #a993cc;
+  --cat-script: #c9ac6e;
+  --cat-mono: #6fadb3;
+  --cat-slab: #a7a58a;
+  --cat-none: #4a4d55;
+
+  /* one color for each compared font (max 5), each above 6:1 on --bg */
+  --font-1: #7fae93;
+  --font-2: #d09a8b;
+  --font-3: #a993cc;
+  --font-4: #c9ac6e;
+  --font-5: #6fadb3;
+
+  /* type */
+  --font-ui: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --fs-xs: 12px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-specimen: 56px;
+
+  /* spacing: 4px grid */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* shape */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-pill: 999px;
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+  /* motion */
+  --dur-in: 200ms;
+  --dur-out: 140ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+
+  /* layout */
+  --nav-h: 48px;
+  --sidebar-w: 288px;
+  --tile-min: 172px;
+  --ctl-h: 24px;
+  --meta-h: 18px;         /* tile meta line: 12px × 1.5 */
+  --panel-reserve: 192px; /* room below the last grid row for the hover panel */
+  --panel-w: 320px;       /* compare settings panel */
+  --rail-w: 44px;
+}

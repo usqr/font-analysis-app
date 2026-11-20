@@ -1,29 +1,30 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import type { CSSProperties, ReactNode, MouseEvent as ReactMouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { StoredFontMeta, FontFamily, FontCategory, FontSource } from '../types';
-import type { ScanEvent, ScanProgressUpdate } from '../lib/api';
-import { fetchDatabase, scanFolderStream, pickFolder, deleteFont, refreshFont, updateFontPath, clearDatabase, deduplicateDatabase, computeMetrics, toggleStarFamily, fetchFontPaths, addFontPath, removeFontPath, bulkSetCategory, bulkSetTags, fetchAllTags } from '../lib/api';
-import { groupByFamily, variantLabel, groupByWidth, familyKey, uniqueSortedWeights, fontForWeightStyleWidth, type WidthStyleGroup } from '../lib/fontFamilies';
-import { useFontFace } from '../lib/useFontFace';
-import { HistogramFilter } from './HistogramFilter';
-import { getAxisInfo } from '../lib/axisDescriptions';
+import type { FontCategory, FontFamily } from '../types';
+import { computeMetrics } from '../lib/api';
 import { IS_STATIC } from '../lib/env';
-import { resolveCategory, type ResolvedCategory } from '../lib/extendedTags';
-import { Tip } from './Tip';
-
-const CATEGORIES: { id: FontCategory; label: string }[] = [
-  { id: 'serif', label: 'Serif' },
-  { id: 'sans-serif', label: 'Sans-Serif' },
-  { id: 'monospace', label: 'Monospace' },
-  { id: 'display', label: 'Display' },
-  { id: 'script', label: 'Script' },
-];
+import { useToast } from '../lib/useToast';
+import {
+  CAT_COLOR, CAT_LABELS, DEFAULT_FILTERS, activeChips, clearChip, matches,
+  type ActiveChip, type Filters,
+} from '../lib/libraryFilters';
+import { compareParam, entryKey, setEntry, toggleEntry, type CompareEntry } from '../lib/compareEntries';
+import type { CompareGroup, CompareOption } from '../lib/familyFaces';
+import { FamilyTile, type TileMenu } from './library/FamilyTile';
+import { FilterSidebar, type TagMode } from './library/FilterSidebar';
+import { CategoryMenu, CompareMenu } from './library/LibraryMenus';
+import { BulkBar, CompareTray } from './library/Dock';
+import { LocalTools } from './library/LocalTools';
+import { useLibraryData } from './library/useLibraryData';
+import { useFamilyFacts } from './library/useFamilyFacts';
+import { Icon } from './ui/Icon';
+import { Toast } from './ui/Toast';
 
 type ViewMode = 'list' | 'grid';
-type CategoryFilter = FontCategory | 'slab';
-type VariableFilter = 'all' | 'variable' | 'static';
-type TagMode = 'metadata' | 'extended';
+type MenuState =
+  | { kind: 'cat'; anchor: HTMLElement; family: FontFamily }
+  | { kind: 'cmp'; anchor: HTMLElement; family: FontFamily; name: string; groups: CompareGroup[] }
+  | { kind: 'bulk'; anchor: HTMLElement };
 
 const TAG_MODE_KEY = 'fa:tagMode';
 
@@ -43,2305 +44,228 @@ function writeTagMode(mode: TagMode) {
   }
 }
 
-const EXTENDED_TAGS_INFO = 'Extended tags come from an analysis of the glyph outlines, not only from the metadata in the font file. They correct serif fonts that the file labels as sans, and they add the "slab" tag. Your own category edits always win.';
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const toEntry = (o: CompareOption, family: string, label = o.label): CompareEntry =>
+  ({ key: entryKey(o), fontId: o.fontId, wght: o.wght, family, label });
 
-const VARIABLE_FILTERS: { id: VariableFilter; label: string; info: string }[] = [
-  { id: 'all', label: 'All', info: 'Show all font families.' },
-  { id: 'variable', label: 'Variable', info: 'Show only families with a variable font (one file with continuous axes).' },
-  { id: 'static', label: 'Static', info: 'Show only families without a variable font (one file for each style).' },
-];
-type CardState = 'collapsed' | 'normal' | 'expanded';
+function ActiveBar({ chips, onClear, onReset }: { chips: ActiveChip[]; onClear: (id: string) => void; onReset: () => void }) {
+  return (
+    <div className="active-bar">
+      <span className="active-label">Active</span>
+      {chips.map((c) => (
+        <button key={c.id} type="button" className="fchip" aria-label={`Remove filter ${c.label}`} onClick={() => onClear(c.id)}>
+          {c.cat && <span className="cat-dot" style={{ '--c': CAT_COLOR[c.cat] } as CSSProperties} />}
+          {c.label}
+          <Icon name="x" />
+        </button>
+      ))}
+      <button type="button" className="btn btn-ghost btn-sm" onClick={onReset}>Reset all</button>
+    </div>
+  );
+}
+
+function CountLabel({ families, total, filtered }: { families: FontFamily[]; total: number; filtered: boolean }) {
+  const fonts = families.reduce((s, f) => s + f.fonts.length, 0);
+  return (
+    <p className="count" aria-live="polite">
+      <b>{fonts.toLocaleString('en-US')}</b> fonts in <b>{families.length.toLocaleString('en-US')}</b> families
+      {filtered && <> of {total.toLocaleString('en-US')} total</>}
+    </p>
+  );
+}
+
+/** Starts the server-side metric computation once, when a filter needs metrics. */
+function useMetricsOnDemand(data: ReturnType<typeof useLibraryData>, needed: boolean) {
+  const [ready, setReady] = useState(IS_STATIC);
+  const { fonts, reload } = data;
+  useEffect(() => {
+    if (ready || !needed || fonts.length === 0) return;
+    if (!fonts.some((f) => !f.metrics || !f.category)) { setReady(true); return; }
+    computeMetrics()
+      .then(({ updated }) => (updated > 0 ? reload() : undefined))
+      .catch(() => {})
+      .finally(() => setReady(true));
+  }, [ready, needed, fonts, reload]);
+  return ready;
+}
 
 export function LibraryView() {
   const navigate = useNavigate();
-  const [families, setFamilies] = useState<FontFamily[]>([]);
-  const [allFonts, setAllFonts] = useState<StoredFontMeta[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [scanning, setScanning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [scanPath, setScanPath] = useState('');
-  const [showScanDialog, setShowScanDialog] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [editingPath, setEditingPath] = useState<{ id: string; path: string } | null>(null);
-  const [browsing, setBrowsing] = useState(false);
-  const [scanProgress, setScanProgress] = useState<{
-    current: number;
-    total: number;
-    added: number;
-    failed: number;
-  } | null>(null);
-  const [scanLog, setScanLog] = useState<ScanProgressUpdate[]>([]);
-  const [confirmClear, setConfirmClear] = useState(false);
-  const scanLogRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('grid');
-  const [globalCardState, setGlobalCardState] = useState<CardState | null>(null);
-  const [globalCardVersion, setGlobalCardVersion] = useState(0);
-  const [dedupMsg, setDedupMsg] = useState<string | null>(null);
-  const dedupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<CategoryFilter | null>(null);
-  const [contrastRange, setContrastRange] = useState<[number, number]>([0, 1]);
-  const [weightRange, setWeightRange] = useState<[number, number]>([0, 1]);
-  const [widthRange, setWidthRange] = useState<[number, number]>([0, 2]);
-  const [xHeightRange, setXHeightRange] = useState<[number, number]>([0, 1]);
-  const [metricsReady, setMetricsReady] = useState(false);
-  const [showStarredOnly, setShowStarredOnly] = useState(false);
-  const [selectedSource, setSelectedSource] = useState<FontSource | null>(null);
-  const [starredSet, setStarredSet] = useState<Set<string>>(new Set());
-  const starredRef = useRef(starredSet);
-  starredRef.current = starredSet;
-  const [savedPaths, setSavedPaths] = useState<string[]>([]);
-  const [bulkEditMode, setBulkEditMode] = useState(false);
-  const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
-  const [allTags, setAllTags] = useState<string[]>([]);
-  const [minStyles, setMinStyles] = useState(1);
-  const [maxStyles, setMaxStyles] = useState(999);
-  const [excludeBasicLatinOnly, setExcludeBasicLatinOnly] = useState(false);
-  const [requiredScripts, setRequiredScripts] = useState<Set<string>>(new Set());
-  const [variableFilter, setVariableFilter] = useState<VariableFilter>('all');
+  const data = useLibraryData();
+  const toast = useToast();
   const [tagMode, setTagModeState] = useState<TagMode>(readTagMode);
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [sidebarOpen, setSidebarOpen] = useState(() => !matchMedia('(max-width: 900px)').matches);
+  const [advOpen, setAdvOpen] = useState(false);
+  const [view, setView] = useState<ViewMode>('grid');
+  const [bulk, setBulk] = useState(false);
+  const [bulkSel, setBulkSel] = useState<Set<string>>(new Set());
+  const [compare, setCompare] = useState<CompareEntry[]>([]);
+  const [menu, setMenu] = useState<MenuState | null>(null);
+
+  const { families, isStarred } = data;
+  const { resolved, facts, extents, values, scripts } = useFamilyFacts(families, tagMode === 'extended', isStarred);
+  const metricsReady = useMetricsOnDemand(data, advOpen || filters.cats.length > 0);
+
+  const visible = useMemo(
+    () => families.filter((f) => matches(facts.get(f.familyName)!, filters, extents)),
+    [families, facts, filters, extents],
+  );
+  const chips = useMemo(() => activeChips(filters, extents), [filters, extents]);
+  const cmpKeys = useMemo(() => new Set(compare.map((e) => e.key)), [compare]);
+  const cmpCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const e of compare) m.set(e.family, (m.get(e.family) ?? 0) + 1);
+    return m;
+  }, [compare]);
+
+  const update = useCallback((fn: (f: Filters) => Filters) => setFilters(fn), []);
+  const resetFilters = useCallback(() => setFilters(DEFAULT_FILTERS), []);
   const setTagMode = useCallback((mode: TagMode) => {
     setTagModeState(mode);
     writeTagMode(mode);
-    if (mode === 'metadata') setSelectedCategory((c) => (c === 'slab' ? null : c));
+    if (mode === 'metadata') setFilters((f) => ({ ...f, cats: f.cats.filter((c) => c !== 'slab') }));
   }, []);
 
-  const loadDatabase = useCallback(async () => {
-    try {
-      setLoading(true);
-      const db = await fetchDatabase();
-      const raw = db.starredFamilies ?? [];
-      const migrated = new Set(raw.map((k) => {
-        const colon = k.indexOf(':');
-        return colon >= 0 && (k.startsWith('local:') || k.startsWith('google:')) ? k.slice(colon + 1) : k;
-      }));
-      setStarredSet(migrated);
-      setAllFonts(db.fonts);
-      setFamilies(groupByFamily(db.fonts, migrated));
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
+  const openFont = useCallback((id: string) => navigate(`/analyze/${id}`), [navigate]);
+  const toggleSelect = useCallback((name: string) => setBulkSel((prev) => {
+    const next = new Set(prev);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    return next;
+  }), []);
+  const openCategoryMenu = useCallback((anchor: HTMLElement, family: FontFamily) => setMenu({ kind: 'cat', anchor, family }), []);
+  const handleCompare = useCallback((anchor: HTMLElement, family: FontFamily, name: string, groups: CompareGroup[]) => {
+    const options = groups.flatMap((g) => g.options);
+    if (options.length === 1) setCompare((prev) => toggleEntry(prev, toEntry(options[0], family.familyName, name)));
+    else setMenu({ kind: 'cmp', anchor, family, name, groups });
+  }, []);
+
+  const toggleBulk = () => {
+    if (bulk) setBulkSel(new Set());
+    setBulk(!bulk);
+  };
+
+  const pickCategory = async (cat: FontCategory) => {
+    if (!menu || menu.kind === 'cmp') return;
+    const fams = menu.kind === 'bulk' ? families.filter((f) => bulkSel.has(f.familyName)) : [menu.family];
+    setMenu(null);
+    if (await data.setCategory(fams, cat)) {
+      toast.show(`Category set to ${CAT_LABELS[cat].long} for ${plural(fams.length, 'family', 'families')}`);
     }
-  }, []);
+  };
 
-  useEffect(() => {
-    loadDatabase();
-    fetchFontPaths().then(setSavedPaths).catch(() => {});
-    fetchAllTags().then(setAllTags).catch(() => {});
-  }, [loadDatabase]);
-
-  useEffect(() => {
-    if (metricsReady || allFonts.length === 0) return;
-    if (!showAdvancedFilters && selectedCategory === null) return;
-    const needsWork = allFonts.some((f) => !f.metrics || !f.category);
-    if (!needsWork) { setMetricsReady(true); return; }
-    computeMetrics().then(({ updated }) => {
-      if (updated > 0) loadDatabase();
-      setMetricsReady(true);
-    }).catch(() => setMetricsReady(true));
-  }, [showAdvancedFilters, selectedCategory, metricsReady, allFonts, loadDatabase]);
-
-  const handleBrowse = useCallback(async () => {
-    setBrowsing(true);
-    try {
-      const folder = await pickFolder();
-      if (folder) setScanPath(folder);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setBrowsing(false);
-    }
-  }, []);
-
-  const handleScan = useCallback(async () => {
-    if (!scanPath.trim()) return;
-    setScanning(true);
-    setError(null);
-    setScanLog([]);
-    setScanProgress(null);
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    try {
-      let added = 0;
-      let failed = 0;
-
-      await scanFolderStream(
-        scanPath.trim(),
-        (event: ScanEvent) => {
-          if (event.type === 'start') {
-            setScanProgress({ current: 0, total: event.total, added: 0, failed: 0 });
-          } else if (event.type === 'progress') {
-            if (event.status === 'ok') added++;
-            else failed++;
-            setScanProgress({ current: event.current, total: event.total, added, failed });
-            setScanLog((prev) => {
-              const next = [...prev, event as ScanProgressUpdate];
-              if (next.length > 200) return next.slice(-200);
-              return next;
-            });
-          } else if (event.type === 'done') {
-            setScanProgress((p) => p ? { ...p, current: p.total } : p);
-          }
-        },
-        controller.signal,
+  const renderMenu = () => {
+    if (!menu) return null;
+    const close = () => setMenu(null);
+    if (menu.kind === 'cmp') {
+      const set = (o: CompareOption, on: boolean) => setCompare((prev) => setEntry(prev, toEntry(o, menu.family.familyName), on));
+      const all = menu.groups.flatMap((g) => g.options);
+      return (
+        <CompareMenu
+          anchor={menu.anchor} name={menu.name} groups={menu.groups} selected={cmpKeys} onClose={close}
+          onToggle={set} onSetAll={(on) => all.forEach((o) => set(o, on))}
+        />
       );
-
-      await loadDatabase();
-      setScanPath('');
-      setShowScanDialog(false);
-    } catch (e: any) {
-      if (e.name !== 'AbortError') {
-        setError(e.message);
-      }
-    } finally {
-      setScanning(false);
-      abortRef.current = null;
     }
-  }, [scanPath, loadDatabase]);
+    const title = menu.kind === 'bulk' ? `Set category · ${plural(bulkSel.size, 'family', 'families')}` : 'Set category';
+    const current = menu.kind === 'cat' ? resolved.get(menu.family.familyName)?.category : undefined;
+    return <CategoryMenu anchor={menu.anchor} title={title} current={current} onPick={pickCategory} onClose={close} />;
+  };
 
-  const handleCancelScan = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
+  const tileMenu = (name: string): TileMenu | undefined =>
+    (menu && menu.kind !== 'bulk' && menu.family.familyName === name ? menu.kind : undefined);
 
-  const handleDelete = useCallback(async (id: string) => {
-    try {
-      await deleteFont(id);
-      setAllFonts((prev) => {
-        const next = prev.filter((f) => f.id !== id);
-        setFamilies(groupByFamily(next, starredRef.current));
-        return next;
-      });
-      setSelected((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, []);
-
-  const handleClearLibrary = useCallback(async () => {
-    try {
-      await clearDatabase();
-      setAllFonts([]);
-      setFamilies([]);
-      setSelected(new Set());
-      setConfirmClear(false);
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, []);
-
-  const handleDedup = useCallback(async () => {
-    try {
-      const { removed } = await deduplicateDatabase();
-      if (removed > 0) await loadDatabase();
-      if (dedupTimerRef.current) clearTimeout(dedupTimerRef.current);
-      setDedupMsg(removed > 0 ? `Removed ${removed} duplicate${removed !== 1 ? 's' : ''}` : 'No duplicates found');
-      dedupTimerRef.current = setTimeout(() => setDedupMsg(null), 3000);
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, [loadDatabase]);
-
-  const handleRefresh = useCallback(async (id: string) => {
-    try {
-      const updated = await refreshFont(id);
-      setAllFonts((prev) => {
-        const next = prev.map((f) => (f.id === id ? updated : f));
-        setFamilies(groupByFamily(next, starredRef.current));
-        return next;
-      });
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, []);
-
-  const handleUpdatePath = useCallback(async () => {
-    if (!editingPath) return;
-    try {
-      await updateFontPath(editingPath.id, editingPath.path);
-      setEditingPath(null);
-      await loadDatabase();
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, [editingPath, loadDatabase]);
-
-  const toggleSelect = useCallback((id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  const handleToggleStarFamily = useCallback(async (fam: FontFamily) => {
-    const key = familyKey(fam.familyName);
-    const newSet = new Set(starredRef.current);
-    if (newSet.has(key)) newSet.delete(key); else newSet.add(key);
-    setStarredSet(newSet);
-    setFamilies((prev) => prev.map((f) =>
-      f.familyName === fam.familyName ? { ...f, starred: newSet.has(key) } : f,
-    ));
-    try {
-      await toggleStarFamily(key);
-    } catch {
-      const revert = new Set(starredRef.current);
-      if (revert.has(key)) revert.delete(key); else revert.add(key);
-      setStarredSet(revert);
-      setFamilies((prev) => prev.map((f) =>
-        f.familyName === fam.familyName ? { ...f, starred: revert.has(key) } : f,
-      ));
-    }
-  }, []);
-
-  const handleCompare = useCallback(() => {
-    if (selected.size < 2) return;
-    const ids = Array.from(selected).slice(0, 5);
-    navigate(`/compare?ids=${ids.join(',')}`);
-  }, [selected, navigate]);
-
-  const handleBulkCategory = useCallback(async (cat: FontCategory) => {
-    const familyNames = bulkSelected;
-    const fontIds = families
-      .filter((f) => familyNames.has(f.familyName))
-      .flatMap((f) => f.fonts.map((v) => v.id));
-    if (fontIds.length === 0) return;
-    try {
-      await bulkSetCategory(fontIds, cat);
-      setAllFonts((prev) => {
-        const idSet = new Set(fontIds);
-        const next = prev.map((f) => idSet.has(f.id) ? { ...f, categoryOverride: cat } : f);
-        setFamilies(groupByFamily(next, starredRef.current));
-        return next;
-      });
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, [bulkSelected, families]);
-
-  const handleBulkTags = useCallback(async (tags: string[]) => {
-    const familyNames = bulkSelected;
-    const fontIds = families
-      .filter((f) => familyNames.has(f.familyName))
-      .flatMap((f) => f.fonts.map((v) => v.id));
-    if (fontIds.length === 0) return;
-    try {
-      await bulkSetTags(fontIds, tags);
-      setAllFonts((prev) => {
-        const idSet = new Set(fontIds);
-        const next = prev.map((f) => {
-          if (!idSet.has(f.id)) return f;
-          const existing = new Set(f.tags ?? []);
-          for (const t of tags) existing.add(t);
-          return { ...f, tags: Array.from(existing) };
-        });
-        setFamilies(groupByFamily(next, starredRef.current));
-        return next;
-      });
-      fetchAllTags().then(setAllTags).catch(() => {});
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, [bulkSelected, families]);
-
-  const handleFamilyCategoryOverride = useCallback(async (family: FontFamily, cat: FontCategory) => {
-    const fontIds = family.fonts.map((f) => f.id);
-    try {
-      await bulkSetCategory(fontIds, cat);
-      setAllFonts((prev) => {
-        const idSet = new Set(fontIds);
-        const next = prev.map((f) => idSet.has(f.id) ? { ...f, categoryOverride: cat } : f);
-        setFamilies(groupByFamily(next, starredRef.current));
-        return next;
-      });
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, []);
-
-  const toggleBulkSelect = useCallback((familyName: string) => {
-    setBulkSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(familyName)) next.delete(familyName);
-      else next.add(familyName);
-      return next;
-    });
-  }, []);
-
-  useEffect(() => {
-    scanLogRef.current?.scrollTo({ top: scanLogRef.current.scrollHeight });
-  }, [scanLog]);
-
-  const familyMetrics = useMemo(() => {
-    const map = new Map<string, { metrics: StoredFontMeta['metrics']; resolved: ResolvedCategory }>();
-    for (const fam of families) {
-      const regular = fam.fonts.find((f) => f.weight >= 380 && f.weight <= 420 && f.style === 'normal')
-        ?? fam.fonts.find((f) => f.style === 'normal') ?? fam.fonts[0];
-      map.set(fam.familyName, { metrics: regular?.metrics, resolved: resolveCategory(regular, fam.fonts, tagMode === 'extended') });
-    }
-    return map;
-  }, [families, tagMode]);
-
-  const availableScripts = useMemo(() => {
-    const scripts = new Set<string>();
-    for (const fam of families) {
-      for (const f of fam.fonts) {
-        if (f.scriptSupport) {
-          for (const s of f.scriptSupport) scripts.add(s);
-        }
-      }
-    }
-    const ordered = ['Latin Extended', 'Cyrillic', 'Greek', 'Arabic', 'Hebrew', 'Devanagari',
-      'Bengali', 'Tamil', 'Telugu', 'Thai', 'Georgian', 'Armenian', 'CJK', 'Hangul', 'Japanese Kana', 'Vietnamese'];
-    return ordered.filter((s) => scripts.has(s));
-  }, [families]);
-
-  const collectMetricValues = useCallback((fams: FontFamily[]) => {
-    const contrast: number[] = [];
-    const weight: number[] = [];
-    const width: number[] = [];
-    const xHeight: number[] = [];
-    for (const fam of fams) {
-      const m = familyMetrics.get(fam.familyName)?.metrics;
-      if (!m) continue;
-      contrast.push(m.contrast);
-      weight.push(m.weight);
-      width.push(m.width);
-      xHeight.push(m.xHeight);
-    }
-    return { contrast, weight, width, xHeight };
-  }, [familyMetrics]);
-
-  const histogramValues = useMemo(() => collectMetricValues(families), [families, collectMetricValues]);
-
-  const searchAndCatFiltered = useMemo(() => {
-    let result = families;
-    if (selectedSource) {
-      result = result.filter((f) => f.sources?.includes(selectedSource) ?? (f.source ?? 'local') === selectedSource);
-    }
-    if (showStarredOnly) {
-      result = result.filter((f) => f.starred);
-    }
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      result = result.filter((f) => f.familyName.toLowerCase().includes(q));
-    }
-    if (selectedCategory) {
-      result = result.filter((f) => {
-        const resolved = familyMetrics.get(f.familyName)?.resolved;
-        return selectedCategory === 'slab' ? resolved?.slab : resolved?.category === selectedCategory;
-      });
-    }
-    return result;
-  }, [families, search, selectedCategory, familyMetrics, showStarredOnly, selectedSource]);
-
-  const filteredHistogramValues = useMemo(
-    () => collectMetricValues(searchAndCatFiltered),
-    [searchAndCatFiltered, collectMetricValues],
-  );
-
-  const filteredFamilies = useMemo(() => {
-    let result = searchAndCatFiltered;
-
-    if (showAdvancedFilters) {
-      result = result.filter((f) => {
-        const m = familyMetrics.get(f.familyName)?.metrics;
-        if (!m) return true;
-        return m.contrast >= contrastRange[0] && m.contrast <= contrastRange[1]
-          && m.weight >= weightRange[0] && m.weight <= weightRange[1]
-          && m.width >= widthRange[0] && m.width <= widthRange[1]
-          && m.xHeight >= xHeightRange[0] && m.xHeight <= xHeightRange[1];
-      });
-
-      if (minStyles > 1 || maxStyles < 999) {
-        result = result.filter((f) => f.fonts.length >= minStyles && f.fonts.length <= maxStyles);
-      }
-
-      if (excludeBasicLatinOnly) {
-        result = result.filter((f) => {
-          return f.fonts.some((font) => {
-            if (!font.scriptSupport) return true;
-            return font.scriptSupport.some((s) => s !== 'Basic Latin');
-          });
-        });
-      }
-
-      if (requiredScripts.size > 0) {
-        result = result.filter((f) => {
-          const familyScripts = new Set<string>();
-          for (const font of f.fonts) {
-            if (font.scriptSupport) {
-              for (const s of font.scriptSupport) familyScripts.add(s);
-            }
-          }
-          for (const req of requiredScripts) {
-            if (!familyScripts.has(req)) return false;
-          }
-          return true;
-        });
-      }
-    }
-
-    if (variableFilter !== 'all') {
-      result = result.filter((f) => !!f.hasVariable === (variableFilter === 'variable'));
-    }
-
-    return result;
-  }, [searchAndCatFiltered, showAdvancedFilters, contrastRange, weightRange, widthRange, xHeightRange, familyMetrics, minStyles, maxStyles, excludeBasicLatinOnly, requiredScripts, variableFilter]);
-
-  const rangesInitialized = useRef(false);
-  useEffect(() => {
-    if (rangesInitialized.current || histogramValues.contrast.length === 0) return;
-    rangesInitialized.current = true;
-    const range = (a: number[]): [number, number] => {
-      const s = [...a].sort((x, y) => x - y);
-      return [s[0], s[s.length - 1]];
-    };
-    setContrastRange(range(histogramValues.contrast));
-    setWeightRange(range(histogramValues.weight));
-    setWidthRange(range(histogramValues.width));
-    setXHeightRange(range(histogramValues.xHeight));
-  }, [histogramValues]);
-
-  const toggleCategory = useCallback((cat: CategoryFilter) => {
-    setSelectedCategory((prev) => prev === cat ? null : cat);
-  }, []);
-
-  const resetAllFilters = useCallback(() => {
-    setSelectedCategory(null);
-    setSelectedSource(null);
-    setShowStarredOnly(false);
-    setSearch('');
-    setMinStyles(1);
-    setMaxStyles(999);
-    setExcludeBasicLatinOnly(false);
-    setRequiredScripts(new Set());
-    setVariableFilter('all');
-    if (histogramValues.contrast.length > 0) {
-      const sorted = (a: number[]) => { const s = [...a].sort((x, y) => x - y); return [s[0], s[s.length - 1]] as [number, number]; };
-      setContrastRange(sorted(histogramValues.contrast));
-      setWeightRange(sorted(histogramValues.weight));
-      setWidthRange(sorted(histogramValues.width));
-      setXHeightRange(sorted(histogramValues.xHeight));
-    }
-  }, [histogramValues]);
-
-  const handleToggleCollapse = useCallback(() => {
-    setGlobalCardState((prev) => {
-      const next = prev === 'collapsed' ? 'normal' : 'collapsed';
-      return next;
-    });
-    setGlobalCardVersion((v) => v + 1);
-  }, []);
-
-
-  if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="flex items-center gap-3">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-600 border-t-blue-400" />
-          <span className="text-neutral-400">Loading library...</span>
-        </div>
-      </div>
-    );
+  if (data.loading) {
+    return <div className="loading-state"><span className="spinner" aria-hidden="true" />Loading library…</div>;
   }
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3 border-b border-neutral-800 px-4 py-3">
-        <input
-          type="text"
-          placeholder="Search families..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-64 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-200 placeholder-neutral-500 outline-none focus:border-blue-500"
-        />
-
-        {/* View toggle */}
-        <div className="flex rounded-md border border-neutral-700" data-testid="view-toggle">
-          <button
-            onClick={() => setViewMode('list')}
-            className={`px-2.5 py-1.5 text-xs transition-colors ${viewMode === 'list' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}
-            title="List view"
-            data-testid="view-list"
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <line x1="1" y1="3" x2="13" y2="3" /><line x1="1" y1="7" x2="13" y2="7" /><line x1="1" y1="11" x2="13" y2="11" />
-            </svg>
-          </button>
-          <button
-            onClick={() => setViewMode('grid')}
-            className={`px-2.5 py-1.5 text-xs transition-colors ${viewMode === 'grid' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-white'}`}
-            title="Grid view"
-            data-testid="view-grid"
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <rect x="1" y="1" width="5" height="5" rx="1" /><rect x="8" y="1" width="5" height="5" rx="1" />
-              <rect x="1" y="8" width="5" height="5" rx="1" /><rect x="8" y="8" width="5" height="5" rx="1" />
-            </svg>
-          </button>
-        </div>
-
-        {!IS_STATIC && (<>
-        <button
-          onClick={() => setShowScanDialog(true)}
-          className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500"
-        >
-          Scan Folder
+    <div className={`lib-page${bulk ? ' is-bulk' : ''}`}>
+      <div className="toolbar">
+        <button type="button" className="btn is-toggle" aria-expanded={sidebarOpen} aria-controls="lib-filters" onClick={() => setSidebarOpen((v) => !v)}>
+          <Icon name="filters" />
+          Filters {chips.length > 0 && <span className="badge">{chips.length}</span>}
         </button>
-        {allFonts.length > 0 && (
-          confirmClear ? (
-            <span className="flex items-center gap-2">
-              <span className="text-xs text-red-400">Delete all fonts?</span>
-              <button
-                onClick={handleClearLibrary}
-                className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-500"
-              >
-                Confirm
-              </button>
-              <button
-                onClick={() => setConfirmClear(false)}
-                className="rounded-md px-3 py-1.5 text-xs text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white"
-              >
-                Cancel
-              </button>
-            </span>
-          ) : (
-            <button
-              onClick={() => setConfirmClear(true)}
-              className="rounded-md border border-red-500/30 px-4 py-1.5 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/10"
-            >
-              Clear Library
-            </button>
-          )
-        )}
-        {allFonts.length > 0 && (
-          <span className="flex items-center gap-2">
-            <button
-              onClick={handleDedup}
-              className="rounded-md border border-neutral-600 px-4 py-1.5 text-sm font-medium text-neutral-300 transition-colors hover:bg-neutral-800 hover:text-white"
-              data-testid="dedup-btn"
-            >
-              Deduplicate
-            </button>
-            {dedupMsg && (
-              <span className="text-xs text-emerald-400" data-testid="dedup-msg">{dedupMsg}</span>
-            )}
-          </span>
-        )}
-        </>)}
-        {viewMode === 'list' && allFonts.length > 0 && (
-          <button
-            onClick={handleToggleCollapse}
-            className="rounded-md border border-neutral-600 px-3 py-1.5 text-xs font-medium text-neutral-300 transition-colors hover:bg-neutral-800 hover:text-white"
-            data-testid="toggle-collapse"
-          >
-            {globalCardState === 'collapsed' ? 'Expand All' : 'Collapse All'}
-          </button>
-        )}
-        {allFonts.length > 0 && (
-          <button
-            onClick={() => { setBulkEditMode((v) => !v); if (bulkEditMode) setBulkSelected(new Set()); }}
-            className={`rounded-md border px-4 py-1.5 text-sm font-medium transition-colors ${
-              bulkEditMode
-                ? 'border-orange-500 bg-orange-500/10 text-orange-400'
-                : 'border-neutral-600 text-neutral-300 hover:bg-neutral-800 hover:text-white'
-            }`}
-          >
-            {bulkEditMode ? 'Exit Bulk Edit' : 'Bulk Edit'}
-          </button>
-        )}
-        {selected.size >= 2 && (
-          <button
-            onClick={handleCompare}
-            className="rounded-md bg-purple-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-purple-500"
-          >
-            Compare ({selected.size})
-          </button>
-        )}
-        <span className="ml-auto text-xs text-neutral-500">
-          {filteredFamilies.length < families.length
-            ? <>{filteredFamilies.reduce((s, f) => s + f.fonts.length, 0)} fonts in {filteredFamilies.length} families <span className="text-neutral-600">of {allFonts.length} total</span></>
-            : <>{allFonts.length} fonts in {families.length} families</>}
-        </span>
+        <label className="search">
+          <Icon name="search" />
+          <span className="sr">Search families</span>
+          <input type="search" placeholder="Search families…" autoComplete="off" value={filters.search} onChange={(e) => update((f) => ({ ...f, search: e.target.value }))} />
+        </label>
+        <div className="seg" role="group" aria-label="View">
+          <button type="button" aria-pressed={view === 'list'} aria-label="List view" data-testid="view-list" onClick={() => setView('list')}><Icon name="list" /></button>
+          <button type="button" aria-pressed={view === 'grid'} aria-label="Grid view" data-testid="view-grid" onClick={() => setView('grid')}><Icon name="grid" /></button>
+        </div>
+        <button type="button" className="btn" aria-pressed={bulk} onClick={toggleBulk}>Bulk Edit</button>
+        {!IS_STATIC && <LocalTools hasFonts={data.fonts.length > 0} onChanged={data.reload} onError={data.setError} />}
+        <CountLabel families={visible} total={data.fonts.length} filtered={visible.length < families.length} />
       </div>
 
-      {/* Category & histogram filters */}
-      {allFonts.length > 0 && (
-        <div className="border-b border-neutral-800 px-4 py-2.5">
-          <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
-            <button
-              onClick={() => setShowStarredOnly((v) => !v)}
-              className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                showStarredOnly
-                  ? 'border-amber-500 bg-amber-500/10 text-amber-400'
-                  : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-300'
-              }`}
-            >
-              &#9733; Starred
-            </button>
-            <span className="mx-1 text-neutral-700">|</span>
-            {!IS_STATIC && ([['local', 'Local'], ['google', 'Google']] as const).map(([src, label]) => (
-              <button
-                key={src}
-                onClick={() => setSelectedSource((prev) => prev === src ? null : src)}
-                className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                  selectedSource === src
-                    ? 'border-green-500 bg-green-500/10 text-green-400'
-                    : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-300'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-            {!IS_STATIC && <span className="mx-1 text-neutral-700">|</span>}
-            <div role="radiogroup" aria-label="Font type" className="flex rounded-full border border-neutral-700 p-0.5" data-testid="variable-filter">
-              {VARIABLE_FILTERS.map((opt) => (
-                <Tip key={opt.id} text={opt.info}>
-                  {(tipId) => (
-                    <button
-                      type="button"
-                      role="radio"
-                      aria-checked={variableFilter === opt.id}
-                      aria-describedby={tipId}
-                      onClick={() => setVariableFilter(opt.id)}
-                      className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
-                        variableFilter === opt.id ? 'bg-teal-500/20 text-teal-300' : 'text-neutral-400 hover:text-neutral-200'
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  )}
-                </Tip>
-              ))}
-            </div>
-            <span className="mx-1 text-neutral-700">|</span>
-            <div role="radiogroup" aria-label="Tags" className="flex items-center gap-2" data-testid="tag-mode">
-              <span className="text-xs text-neutral-500">Tags:</span>
-              {([['metadata', 'file meta'], ['extended', 'extended']] as const).map(([mode, label]) => (
-                <label key={mode} className="flex cursor-pointer items-center gap-1">
-                  <input
-                    type="radio"
-                    name="tag-mode"
-                    value={mode}
-                    checked={tagMode === mode}
-                    onChange={() => setTagMode(mode)}
-                    aria-describedby={mode === 'extended' ? 'extended-tags-info' : undefined}
-                    className="accent-blue-500"
-                  />
-                  <span className="text-xs text-neutral-400">{label}</span>
-                </label>
-              ))}
-            </div>
-            <Tip text={<span id="extended-tags-info">{EXTENDED_TAGS_INFO}</span>} align="start">
-              {(tipId) => (
-                <button type="button" aria-label="About extended tags" aria-describedby={tipId} className="-ml-1 flex h-4 w-4 items-center justify-center rounded-full border border-neutral-600 text-[10px] leading-none text-neutral-400 hover:text-neutral-200">
-                  i
-                </button>
-              )}
-            </Tip>
-            <span className="mx-1 text-neutral-700">|</span>
-            {CATEGORIES.map((cat) => (
-              <button
-                key={cat.id}
-                onClick={() => toggleCategory(cat.id)}
-                className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                  selectedCategory === cat.id
-                    ? 'border-blue-500 bg-blue-500/10 text-blue-400'
-                    : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-300'
-                }`}
-              >
-                {cat.label}
-              </button>
-            ))}
-            {tagMode === 'extended' && (
-              <button
-                onClick={() => toggleCategory('slab')}
-                title="Slab serifs, found by the outline analysis"
-                className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                  selectedCategory === 'slab'
-                    ? 'border-blue-500 bg-blue-500/10 text-blue-400'
-                    : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-300'
-                }`}
-              >
-                Slab
-              </button>
-            )}
-            {(selectedCategory !== null || selectedSource !== null || search.trim() || showStarredOnly || excludeBasicLatinOnly || requiredScripts.size > 0 || minStyles > 1 || maxStyles < 999 || variableFilter !== 'all') && (
-              <button
-                onClick={resetAllFilters}
-                className="ml-1 text-xs text-neutral-500 hover:text-neutral-300"
-              >
-                Reset all
-              </button>
-            )}
-            <div className="ml-auto flex items-center gap-2">
-              <span className="text-xs text-neutral-500">Advanced Filters</span>
-              <button
-                onClick={() => setShowAdvancedFilters((v) => !v)}
-                className={`flex h-5 w-9 items-center rounded-full px-0.5 transition-colors ${showAdvancedFilters ? 'bg-blue-600' : 'bg-neutral-700'}`}
-              >
-                <span className={`h-4 w-4 rounded-full bg-white transition-transform ${showAdvancedFilters ? 'translate-x-4' : 'translate-x-0'}`} />
-              </button>
-            </div>
-          </div>
+      {data.error && (
+        <div className="error-banner" role="alert">
+          {data.error}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => data.setError(null)}>Dismiss</button>
+        </div>
+      )}
 
-          {showAdvancedFilters && histogramValues.contrast.length > 0 && (
-            <div className="mt-3 flex gap-4">
-              <HistogramFilter
-                label="Contrast"
-                values={histogramValues.contrast}
-                filteredValues={filteredHistogramValues.contrast}
-                range={contrastRange}
-                onChange={setContrastRange}
-                onReset={() => {
-                  const s = [...histogramValues.contrast].sort((a, b) => a - b);
-                  setContrastRange([s[0], s[s.length - 1]]);
-                }}
-              />
-              <HistogramFilter
-                label="Weight"
-                values={histogramValues.weight}
-                filteredValues={filteredHistogramValues.weight}
-                range={weightRange}
-                onChange={setWeightRange}
-                onReset={() => {
-                  const s = [...histogramValues.weight].sort((a, b) => a - b);
-                  setWeightRange([s[0], s[s.length - 1]]);
-                }}
-              />
-              <HistogramFilter
-                label="Width"
-                values={histogramValues.width}
-                filteredValues={filteredHistogramValues.width}
-                range={widthRange}
-                onChange={setWidthRange}
-                onReset={() => {
-                  const s = [...histogramValues.width].sort((a, b) => a - b);
-                  setWidthRange([s[0], s[s.length - 1]]);
-                }}
-              />
-              <HistogramFilter
-                label="X-Height"
-                values={histogramValues.xHeight}
-                filteredValues={filteredHistogramValues.xHeight}
-                range={xHeightRange}
-                onChange={setXHeightRange}
-                onReset={() => {
-                  const s = [...histogramValues.xHeight].sort((a, b) => a - b);
-                  setXHeightRange([s[0], s[s.length - 1]]);
-                }}
-              />
-            </div>
-          )}
-          {showAdvancedFilters && (
-            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-neutral-500">Styles:</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={minStyles}
-                  onChange={(e) => setMinStyles(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-14 rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-300 focus:border-blue-500 focus:outline-none"
-                />
-                <span className="text-xs text-neutral-600">–</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={maxStyles >= 999 ? '' : maxStyles}
-                  placeholder="∞"
-                  onChange={(e) => {
-                    const v = parseInt(e.target.value);
-                    setMaxStyles(isNaN(v) ? 999 : Math.max(1, v));
-                  }}
-                  className="w-14 rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-300 focus:border-blue-500 focus:outline-none"
-                />
-                {(minStyles > 1 || maxStyles < 999) && (
-                  <button onClick={() => { setMinStyles(1); setMaxStyles(999); }} className="text-xs text-neutral-500 hover:text-neutral-300">✕</button>
-                )}
-              </div>
-
-              <label className="flex cursor-pointer items-center gap-1.5">
-                <input
-                  type="checkbox"
-                  checked={excludeBasicLatinOnly}
-                  onChange={(e) => setExcludeBasicLatinOnly(e.target.checked)}
-                  className="rounded border-neutral-600 bg-neutral-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-0"
-                />
-                <span className="text-xs text-neutral-400">Exclude basic-Latin-only</span>
-              </label>
-
-              {availableScripts.length > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-neutral-500">Require:</span>
-                  <div className="flex flex-wrap gap-1">
-                    {availableScripts.map((script) => (
-                      <button
-                        key={script}
-                        onClick={() => {
-                          setRequiredScripts((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(script)) next.delete(script);
-                            else next.add(script);
-                            return next;
-                          });
-                        }}
-                        className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors ${
-                          requiredScripts.has(script)
-                            ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400'
-                            : 'border-neutral-700 text-neutral-500 hover:border-neutral-500 hover:text-neutral-400'
-                        }`}
-                      >
-                        {script}
-                      </button>
-                    ))}
-                  </div>
-                  {requiredScripts.size > 0 && (
-                    <button onClick={() => setRequiredScripts(new Set())} className="text-xs text-neutral-500 hover:text-neutral-300">✕</button>
-                  )}
+      <div className={`workspace${sidebarOpen ? '' : ' no-sidebar'}`}>
+        <FilterSidebar
+          hidden={!sidebarOpen}
+          filters={filters} update={update} onReset={resetFilters} tagMode={tagMode} onTagMode={setTagMode}
+          extents={extents} values={values} scripts={scripts} advOpen={advOpen} onAdvOpen={setAdvOpen}
+          advCount={chips.filter((c) => c.advanced).length} metricsPending={!metricsReady}
+        />
+        <main className="lib-content">
+          {chips.length > 0 && <ActiveBar chips={chips} onClear={(id) => update((f) => clearChip(f, id))} onReset={resetFilters} />}
+          <div className="grid-scroll">
+            <div className={`tile-grid${view === 'list' ? ' is-list' : ''}`} aria-label="Font families" data-testid="grid-view">
+              {visible.length === 0 && (
+                <div className="empty" style={{ gridColumn: '1 / -1' }}>
+                  {data.fonts.length === 0
+                    ? <p>No fonts in the library.{IS_STATIC ? '' : ' Use “Scan Folder” to add fonts from a folder.'}</p>
+                    : <><p>No families match these filters.</p><button type="button" className="btn" onClick={resetFilters}>Reset all filters</button></>}
                 </div>
               )}
-            </div>
-          )}
-          {showAdvancedFilters && histogramValues.contrast.length === 0 && !metricsReady && (
-            <div className="mt-3 flex items-center gap-2 text-xs text-neutral-500">
-              <div className="h-3 w-3 animate-spin rounded-full border border-neutral-600 border-t-blue-400" />
-              Computing font metrics...
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Scan dialog */}
-      {showScanDialog && (
-        <div className="border-b border-neutral-800 bg-neutral-900/80 px-4 py-3">
-          <div className="flex items-center gap-3">
-            <label className="text-sm text-neutral-400">Folder path:</label>
-            <input
-              type="text"
-              value={scanPath}
-              onChange={(e) => setScanPath(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !scanning && handleScan()}
-              placeholder="/path/to/fonts"
-              disabled={scanning}
-              className="flex-1 rounded-md border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm text-neutral-200 placeholder-neutral-500 outline-none focus:border-blue-500 disabled:opacity-50"
-              autoFocus
-            />
-            <button
-              onClick={handleBrowse}
-              disabled={browsing || scanning}
-              className="rounded-md border border-neutral-600 px-3 py-1.5 text-sm text-neutral-300 transition-colors hover:bg-neutral-800 hover:text-white disabled:opacity-50"
-            >
-              {browsing ? 'Opening...' : 'Browse'}
-            </button>
-            {scanning ? (
-              <button
-                onClick={handleCancelScan}
-                className="rounded-md bg-red-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-red-500"
-              >
-                Stop
-              </button>
-            ) : (
-              <button
-                onClick={handleScan}
-                disabled={!scanPath.trim()}
-                className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
-              >
-                Scan
-              </button>
-            )}
-            <button
-              onClick={() => { if (!scanning) { setShowScanDialog(false); setScanPath(''); setScanLog([]); setScanProgress(null); } }}
-              disabled={scanning}
-              className="rounded-md px-3 py-1.5 text-sm text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white disabled:opacity-50"
-            >
-              Close
-            </button>
-          </div>
-
-          {/* Saved font paths */}
-          {savedPaths.length > 0 && !scanning && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <span className="text-xs text-neutral-500">Saved:</span>
-              {savedPaths.map((p) => (
-                <span key={p} className="flex items-center gap-1 rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
-                  <button
-                    onClick={() => setScanPath(p)}
-                    className="max-w-48 truncate hover:text-white"
-                    title={p}
-                  >
-                    {p.split('/').pop() || p}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      const updated = await removeFontPath(p);
-                      setSavedPaths(updated);
-                    }}
-                    className="text-neutral-600 hover:text-red-400"
-                    title="Remove saved path"
-                  >
-                    &times;
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-          {scanPath.trim() && !scanning && !savedPaths.includes(scanPath.trim()) && (
-            <div className="mt-1.5">
-              <button
-                onClick={async () => {
-                  const updated = await addFontPath(scanPath.trim());
-                  setSavedPaths(updated);
-                }}
-                className="text-xs text-neutral-500 hover:text-blue-400"
-              >
-                + Save this path
-              </button>
-            </div>
-          )}
-
-          {scanProgress && (
-            <div className="mt-3 space-y-2">
-              <div className="flex items-center gap-3">
-                <div className="h-2 flex-1 overflow-hidden rounded-full bg-neutral-800">
-                  <div
-                    className="h-full rounded-full bg-blue-500 transition-all duration-150"
-                    style={{ width: `${scanProgress.total > 0 ? (scanProgress.current / scanProgress.total) * 100 : 0}%` }}
-                  />
-                </div>
-                <span className="shrink-0 text-xs tabular-nums text-neutral-400">
-                  {scanProgress.current} / {scanProgress.total}
-                </span>
-              </div>
-
-              <div className="flex gap-4 text-xs">
-                <span className="text-emerald-400">{scanProgress.added} added</span>
-                {scanProgress.failed > 0 && (
-                  <span className="text-red-400">{scanProgress.failed} failed</span>
-                )}
-                {scanning && (
-                  <span className="text-neutral-500">
-                    {Math.round((scanProgress.current / scanProgress.total) * 100)}%
-                  </span>
-                )}
-              </div>
-
-              <div
-                ref={scanLogRef}
-                className="max-h-48 overflow-y-auto rounded-md bg-neutral-950 p-2 font-mono text-xs"
-              >
-                {scanLog.map((entry, i) => (
-                  <div key={i} className="flex gap-2 py-px">
-                    <span className="shrink-0 tabular-nums text-neutral-600">{entry.current}</span>
-                    {entry.status === 'ok' ? (
-                      <span className="text-neutral-400">
-                        <span className="text-emerald-500">+</span>{' '}
-                        {entry.familyName}{' '}
-                        <span className="text-neutral-600">{entry.subfamilyName}</span>{' '}
-                        <span className="text-neutral-700">{entry.fileName}</span>
-                      </span>
-                    ) : (
-                      <span className="text-red-400/70">
-                        <span className="text-red-500">x</span>{' '}
-                        {entry.fileName}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-
-      {/* Update path dialog */}
-      {editingPath && (
-        <div className="border-b border-neutral-800 bg-neutral-900/80 px-4 py-3">
-          <div className="flex items-center gap-3">
-            <label className="text-sm text-neutral-400">New path:</label>
-            <input
-              type="text"
-              value={editingPath.path}
-              onChange={(e) => setEditingPath({ ...editingPath, path: e.target.value })}
-              onKeyDown={(e) => e.key === 'Enter' && handleUpdatePath()}
-              className="flex-1 rounded-md border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm text-neutral-200 placeholder-neutral-500 outline-none focus:border-blue-500"
-              autoFocus
-            />
-            <button
-              onClick={handleUpdatePath}
-              className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500"
-            >
-              Save
-            </button>
-            <button
-              onClick={() => setEditingPath(null)}
-              className="rounded-md px-3 py-1.5 text-sm text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Error banner */}
-      {error && (
-        <div className="flex items-center justify-between border-b border-red-500/20 bg-red-500/10 px-4 py-2">
-          <span className="text-sm text-red-400">{error}</span>
-          <button
-            onClick={() => setError(null)}
-            className="text-xs text-red-400 hover:text-red-300"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      {/* Font list / grid */}
-      <div className="flex-1 overflow-y-auto bg-[#242424] p-4">
-        {filteredFamilies.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-4 text-neutral-500">
-            {allFonts.length === 0 ? (
-              <>
-                <p className="text-lg">No fonts in library</p>
-                <p className="text-sm">
-                  Click &quot;Scan Folder&quot; to add fonts from your filesystem.
-                </p>
-              </>
-            ) : (
-              <p className="text-lg">
-                {search.trim()
-                  ? <>No families match &quot;{search}&quot;{(selectedCategory || selectedSource || showStarredOnly || showAdvancedFilters) ? ' with the current filters' : ''}</>
-                  : 'No families match the current filters'}
-              </p>
-            )}
-          </div>
-        ) : viewMode === 'grid' ? (
-          <div className="grid w-full gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 230px), 1fr))' }} data-testid="grid-view">
-            {filteredFamilies.map((family) => (
-              <GridFamilyCard
-                key={family.familyName}
-                family={family}
-                selected={selected}
-                onAnalyze={(id) => navigate(`/analyze/${id}`)}
-                onToggleStar={handleToggleStarFamily}
-                onToggleSelect={toggleSelect}
-                onCategoryOverride={handleFamilyCategoryOverride}
-                bulkEditMode={bulkEditMode}
-                bulkSelected={bulkSelected.has(family.familyName)}
-                onBulkToggle={toggleBulkSelect}
-                resolved={familyMetrics.get(family.familyName)?.resolved}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4" data-testid="list-view">
-            {filteredFamilies.map((family) => (
-              <FamilyCard
-                key={family.familyName}
-                family={family}
-                selected={selected}
-                onToggleSelect={toggleSelect}
-                onToggleStar={handleToggleStarFamily}
-                onAnalyze={(id) => navigate(`/analyze/${id}`)}
-                onDelete={handleDelete}
-                onRefresh={handleRefresh}
-                onEditPath={(id, path) => setEditingPath({ id, path })}
-                globalState={globalCardState}
-                globalVersion={globalCardVersion}
-                onCategoryOverride={handleFamilyCategoryOverride}
-                bulkEditMode={bulkEditMode}
-                bulkSelected={bulkSelected.has(family.familyName)}
-                onBulkToggle={toggleBulkSelect}
-                resolved={familyMetrics.get(family.familyName)?.resolved}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Floating bulk edit bar */}
-      {bulkEditMode && bulkSelected.size > 0 && (
-        <BulkEditBar
-          count={bulkSelected.size}
-          allTags={allTags}
-          onSetCategory={handleBulkCategory}
-          onAddTags={handleBulkTags}
-          onClear={() => setBulkSelected(new Set())}
-        />
-      )}
-
-      {/* Floating compare tray */}
-      {!bulkEditMode && selected.size > 0 && (
-        <CompareTray
-          selected={selected}
-          allFonts={allFonts}
-          onRemove={(id) => toggleSelect(id)}
-          onClear={() => setSelected(new Set())}
-          onCompare={handleCompare}
-        />
-      )}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Floating Bulk Edit Bar                                             */
-/* ------------------------------------------------------------------ */
-
-function BulkEditBar({
-  count,
-  allTags,
-  onSetCategory,
-  onAddTags,
-  onClear,
-}: {
-  count: number;
-  allTags: string[];
-  onSetCategory: (cat: FontCategory) => void;
-  onAddTags: (tags: string[]) => void;
-  onClear: () => void;
-}) {
-  const [tagInput, setTagInput] = useState('');
-  const [showTagSuggestions, setShowTagSuggestions] = useState(false);
-  const tagInputRef = useRef<HTMLInputElement>(null);
-
-  const suggestions = useMemo(() => {
-    if (!tagInput.trim()) return [];
-    const q = tagInput.toLowerCase().trim();
-    return allTags.filter((t) => t.toLowerCase().includes(q) && t.toLowerCase() !== q).slice(0, 8);
-  }, [tagInput, allTags]);
-
-  const handleAddTags = () => {
-    const tags = tagInput.split(',').map((t) => t.trim()).filter(Boolean);
-    if (tags.length === 0) return;
-    onAddTags(tags);
-    setTagInput('');
-  };
-
-  return (
-    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-orange-500/30 bg-neutral-900/95 px-4 py-3 shadow-2xl backdrop-blur-sm">
-      <div className="mx-auto flex max-w-7xl items-center gap-4">
-        <span className="shrink-0 text-xs font-medium text-orange-400">
-          {count} {count === 1 ? 'family' : 'families'} selected
-        </span>
-
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-neutral-500">Category:</span>
-          <select
-            onChange={(e) => { if (e.target.value) onSetCategory(e.target.value as FontCategory); e.target.value = ''; }}
-            defaultValue=""
-            className="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-200 outline-none focus:border-blue-500"
-          >
-            <option value="" disabled>Choose...</option>
-            {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-          </select>
-        </div>
-
-        <div className="relative flex items-center gap-2">
-          <span className="text-xs text-neutral-500">Tags:</span>
-          <input
-            ref={tagInputRef}
-            type="text"
-            value={tagInput}
-            onChange={(e) => { setTagInput(e.target.value); setShowTagSuggestions(true); }}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleAddTags(); }}
-            onFocus={() => setShowTagSuggestions(true)}
-            onBlur={() => setTimeout(() => setShowTagSuggestions(false), 200)}
-            placeholder="Add tags (comma-separated)"
-            className="w-48 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-200 placeholder-neutral-500 outline-none focus:border-blue-500"
-          />
-          <button
-            onClick={handleAddTags}
-            disabled={!tagInput.trim()}
-            className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
-          >
-            Add
-          </button>
-          {showTagSuggestions && suggestions.length > 0 && (
-            <div className="absolute bottom-full left-10 mb-1 w-48 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-xl">
-              {suggestions.map((tag) => (
-                <button
-                  key={tag}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    setTagInput(tag);
-                    setShowTagSuggestions(false);
-                  }}
-                  className="block w-full px-3 py-1 text-left text-xs text-neutral-300 hover:bg-neutral-800"
-                >
-                  {tag}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="ml-auto">
-          <button
-            onClick={onClear}
-            className="rounded-md px-3 py-1.5 text-xs text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white"
-          >
-            Clear Selection
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Floating Compare Tray                                              */
-/* ------------------------------------------------------------------ */
-
-function CompareTray({
-  selected,
-  allFonts,
-  onRemove,
-  onClear,
-  onCompare,
-}: {
-  selected: Set<string>;
-  allFonts: StoredFontMeta[];
-  onRemove: (id: string) => void;
-  onClear: () => void;
-  onCompare: () => void;
-}) {
-  const selectedFonts = useMemo(
-    () => allFonts.filter((f) => selected.has(f.id)).slice(0, 5),
-    [allFonts, selected],
-  );
-
-  return (
-    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-neutral-700 bg-neutral-900/95 px-4 py-2.5 shadow-2xl backdrop-blur-sm">
-      <div className="mx-auto flex max-w-7xl items-center gap-3">
-        <span className="shrink-0 text-xs font-medium text-neutral-400">
-          {selected.size} selected
-        </span>
-        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
-          {selectedFonts.map((f) => (
-            <span
-              key={f.id}
-              className="flex shrink-0 items-center gap-1 rounded-full bg-neutral-800 px-2.5 py-1 text-xs text-neutral-300"
-            >
-              <span className="max-w-32 truncate">
-                {f.preferredFamilyName ?? f.familyName} {f.subfamilyName}
-              </span>
-              <button
-                onClick={() => onRemove(f.id)}
-                className="ml-0.5 text-neutral-500 hover:text-neutral-200"
-              >
-                &times;
-              </button>
-            </span>
-          ))}
-          {selected.size > 5 && (
-            <span className="shrink-0 text-xs text-neutral-500">
-              +{selected.size - 5} more
-            </span>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            onClick={onClear}
-            className="rounded-md px-3 py-1.5 text-xs text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white"
-          >
-            Clear
-          </button>
-          <button
-            onClick={onCompare}
-            disabled={selected.size < 2}
-            className="rounded-md bg-purple-600 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-purple-500 disabled:opacity-40"
-          >
-            Compare
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Source Badge                                                       */
-/* ------------------------------------------------------------------ */
-
-function SourceBadge({ source, sources }: { source?: string; sources?: string[] }) {
-  const hasBoth = sources && sources.includes('local') && sources.includes('google');
-  if (hasBoth) {
-    return (
-      <span
-        className="inline-flex h-5 items-center justify-center rounded-full bg-purple-500/15 px-1 text-[10px] font-bold text-purple-400"
-        title="Local + Google Fonts"
-      >
-        L+G
-      </span>
-    );
-  }
-  if (source === 'google') {
-    return (
-      <span
-        className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-blue-500/15 text-[10px] font-bold text-blue-400"
-        title="Google Fonts"
-      >
-        G
-      </span>
-    );
-  }
-  return (
-    <span
-      className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-neutral-700/50 text-[10px] font-bold text-neutral-500"
-      title="Local font"
-    >
-      L
-    </span>
-  );
-}
-
-function VariableBadge() {
-  return (
-    <span
-      className="inline-flex h-5 items-center justify-center rounded-full bg-teal-500/15 px-1 text-[10px] font-bold text-teal-400"
-      title="Variable Font"
-    >
-      VF
-    </span>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  List view: FamilyCard                                              */
-/* ------------------------------------------------------------------ */
-
-interface FamilyCardProps {
-  family: FontFamily;
-  selected: Set<string>;
-  onToggleSelect: (id: string) => void;
-  onToggleStar: (family: FontFamily) => void;
-  onAnalyze: (id: string) => void;
-  onDelete: (id: string) => void;
-  onRefresh: (id: string) => void;
-  onEditPath: (id: string, currentPath: string) => void;
-  globalState: CardState | null;
-  globalVersion: number;
-  onCategoryOverride?: (family: FontFamily, cat: FontCategory) => void;
-  bulkEditMode?: boolean;
-  bulkSelected?: boolean;
-  onBulkToggle?: (familyName: string) => void;
-  resolved?: ResolvedCategory;
-}
-
-function FamilyCard({
-  family,
-  selected,
-  onToggleSelect,
-  onToggleStar,
-  onAnalyze,
-  onDelete,
-  onRefresh,
-  onEditPath,
-  globalState,
-  globalVersion,
-  onCategoryOverride,
-  bulkEditMode,
-  bulkSelected,
-  onBulkToggle,
-  resolved,
-}: FamilyCardProps) {
-  const [cardState, setCardState] = useState<CardState>('normal');
-  const [activeWidth, setActiveWidth] = useState<string>('');
-  const [showItalic, setShowItalic] = useState(false);
-  const [showCatPopover, setShowCatPopover] = useState(false);
-  const catPopoverRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (globalState) setCardState(globalState);
-  }, [globalState, globalVersion]);
-
-  useEffect(() => {
-    if (!showCatPopover) return;
-    const handler = (e: MouseEvent) => {
-      if (catPopoverRef.current && !catPopoverRef.current.contains(e.target as Node)) {
-        setShowCatPopover(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showCatPopover]);
-
-  const widthGroups = useMemo(() => groupByWidth(family.fonts), [family.fonts]);
-  const widthKeys = useMemo(() => Array.from(widthGroups.keys()), [widthGroups]);
-  const hasMultipleWidths = widthKeys.length > 1;
-
-  useEffect(() => {
-    if (!widthGroups.has(activeWidth || 'Default')) {
-      setActiveWidth(widthKeys[0] === 'Default' ? '' : widthKeys[0] ?? '');
-    }
-  }, [widthKeys, widthGroups, activeWidth]);
-
-  const currentWidthKey = activeWidth || 'Default';
-  const currentGroup: WidthStyleGroup = widthGroups.get(currentWidthKey) ?? { normal: [], italic: [] };
-  const hasItalics = currentGroup.italic.length > 0;
-  const hasNormals = currentGroup.normal.length > 0;
-  const displayedFonts = showItalic && hasItalics ? currentGroup.italic : currentGroup.normal;
-
-  const effectiveCategory = resolved?.category ?? family.fonts[0]?.categoryOverride ?? family.fonts[0]?.category;
-  const CAT_COLORS: Record<string, string> = {
-    'serif': 'bg-rose-500/15 text-rose-400 border-rose-500/30',
-    'sans-serif': 'bg-sky-500/15 text-sky-400 border-sky-500/30',
-    'monospace': 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-    'display': 'bg-purple-500/15 text-purple-400 border-purple-500/30',
-    'script': 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-  };
-
-  const toggleCardState = () => {
-    setCardState((s) => (s === 'collapsed' ? 'normal' : 'collapsed'));
-  };
-
-  return (
-    <div className={`rounded-lg border bg-neutral-900 ${bulkSelected ? 'border-orange-500' : 'border-neutral-800'}`} data-testid="family-card">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2">
-        {bulkEditMode && (
-          <input
-            type="checkbox"
-            checked={bulkSelected ?? false}
-            onChange={() => onBulkToggle?.(family.familyName)}
-            className="mr-2 h-3.5 w-3.5 shrink-0 rounded border-neutral-600 bg-neutral-800 accent-orange-500"
-          />
-        )}
-        <button
-          onClick={toggleCardState}
-          className="min-w-0 flex-1 text-left"
-          data-testid="family-header"
-        >
-          <h3 className="truncate text-xs font-semibold text-white">
-            <span className="mr-2 inline-block text-neutral-600 transition-transform" style={{ transform: cardState === 'collapsed' ? 'rotate(-90deg)' : 'rotate(0)' }}>
-              ▾
-            </span>
-            {family.familyName}
-          </h3>
-          <p className="ml-5 text-xs text-neutral-500">
-            {family.fonts.length} variant{family.fonts.length !== 1 ? 's' : ''}
-          </p>
-        </button>
-        <div className="relative flex items-center gap-1">
-          {effectiveCategory && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setShowCatPopover((v) => !v); }}
-              className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${CAT_COLORS[effectiveCategory] ?? 'bg-neutral-700/50 text-neutral-500 border-neutral-700'}`}
-              title={categoryTitle(effectiveCategory, resolved)}
-            >
-              {resolved?.slab ? 'slab serif' : effectiveCategory}
-            </button>
-          )}
-          {showCatPopover && (
-            <div
-              ref={catPopoverRef}
-              className="absolute right-0 top-7 z-30 w-36 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-xl"
-            >
-              <div className="border-b border-neutral-800 px-3 py-1">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Set Category</span>
-              </div>
-              {CATEGORIES.map((cat) => (
-                <button
-                  key={cat.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCategoryOverride?.(family, cat.id);
-                    setShowCatPopover(false);
-                  }}
-                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-neutral-800 ${
-                    effectiveCategory === cat.id ? 'text-blue-400' : 'text-neutral-300'
-                  }`}
-                >
-                  {effectiveCategory === cat.id && <span className="text-blue-400">&#10003;</span>}
-                  <span className={effectiveCategory === cat.id ? '' : 'ml-5'}>{cat.label}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          <button
-            onClick={(e) => { e.stopPropagation(); onToggleStar(family); }}
-            className="shrink-0 text-sm leading-none transition-colors"
-            title={family.starred ? 'Unstar family' : 'Star family'}
-          >
-            {family.starred
-              ? <span className="text-amber-400">&#9733;</span>
-              : <span className="text-neutral-700 hover:text-amber-400/60">&#9734;</span>}
-          </button>
-          <SourceBadge source={family.source} sources={family.sources} />
-          {family.hasVariable && <VariableBadge />}
-        </div>
-        {cardState !== 'collapsed' && (
-          <button
-            onClick={() => setCardState((s) => (s === 'expanded' ? 'normal' : 'expanded'))}
-            className="ml-2 rounded px-2 py-1 text-xs text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white"
-          >
-            {cardState === 'expanded' ? 'Hide paths' : 'Show paths'}
-          </button>
-        )}
-      </div>
-
-      {/* Body (hidden when collapsed) */}
-      {cardState !== 'collapsed' && (
-        <>
-          {/* Width tabs / dropdown */}
-          {hasMultipleWidths && (
-            widthKeys.length > 3 ? (
-              <div className="border-t border-neutral-800 px-3 py-2" data-testid="width-tabs">
-                <select
-                  value={currentWidthKey}
-                  onChange={(e) => { setActiveWidth(e.target.value === 'Default' ? '' : e.target.value); setShowItalic(false); }}
-                  className="w-full rounded border border-neutral-700 bg-neutral-800 px-2.5 py-1 text-xs text-neutral-200 outline-none focus:border-blue-500"
-                  data-testid="width-select"
-                >
-                  {widthKeys.map((wk) => (
-                    <option key={wk} value={wk}>{wk}</option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div className="flex gap-1 border-t border-neutral-800 px-3 py-2" data-testid="width-tabs">
-                {widthKeys.map((wk) => (
-                  <button
-                    key={wk}
-                    onClick={() => { setActiveWidth(wk === 'Default' ? '' : wk); setShowItalic(false); }}
-                    className={`rounded px-2.5 py-1 text-xs transition-colors ${
-                      currentWidthKey === wk
-                        ? 'bg-neutral-700 text-white'
-                        : 'text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300'
-                    }`}
-                    data-testid={`width-tab-${wk}`}
-                  >
-                    {wk}
-                  </button>
-                ))}
-              </div>
-            )
-          )}
-
-          {/* Style switch */}
-          {hasNormals && hasItalics && (
-            <div className="flex gap-1 border-t border-neutral-800 px-3 py-2" data-testid="style-switch">
-              <button
-                onClick={() => setShowItalic(false)}
-                className={`rounded px-2.5 py-1 text-xs transition-colors ${
-                  !showItalic ? 'bg-blue-600 text-white' : 'text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300'
-                }`}
-                data-testid="style-regular"
-              >
-                Regular
-              </button>
-              <button
-                onClick={() => setShowItalic(true)}
-                className={`rounded px-2.5 py-1 text-xs transition-colors ${
-                  showItalic ? 'bg-blue-600 text-white' : 'text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300'
-                }`}
-                data-testid="style-italic"
-              >
-                Italic
-              </button>
-            </div>
-          )}
-
-          {/* Font variant list */}
-          <div className="border-t border-neutral-800" data-testid="variant-list">
-            {displayedFonts.map((font) => (
-              <div
-                key={font.id}
-                className="group relative flex items-center gap-1.5 border-b border-neutral-800/50 px-3 py-1.5 last:border-b-0"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(font.id)}
-                  onChange={() => onToggleSelect(font.id)}
-                  className="h-3.5 w-3.5 shrink-0 rounded border-neutral-600 bg-neutral-800 accent-blue-500"
+              {visible.map((fam) => (
+                <FamilyTile
+                  key={fam.familyName}
+                  family={fam}
+                  resolved={resolved.get(fam.familyName)}
+                  starred={isStarred(fam.familyName)}
+                  bulk={bulk}
+                  selected={bulkSel.has(fam.familyName)}
+                  menu={tileMenu(fam.familyName)}
+                  cmpCount={cmpCounts.get(fam.familyName) ?? 0}
+                  onOpen={openFont}
+                  onToggleStar={data.toggleStar}
+                  onToggleSelect={toggleSelect}
+                  onCategoryMenu={openCategoryMenu}
+                  onCompare={handleCompare}
                 />
-                <div className="min-w-0 flex-1">
-                  <span className="block truncate text-xs text-neutral-300">
-                    {variantLabel(font, hasMultipleWidths)}
-                  </span>
-                  {cardState === 'expanded' && (
-                    <p className="truncate text-xs text-neutral-600">
-                      {font.filePath}
-                    </p>
-                  )}
-                </div>
-                <span className="min-w-10 shrink-0 text-right text-xs tabular-nums text-neutral-600">
-                  {font.weight}
-                </span>
-                <div className="absolute right-2 top-1/2 hidden -translate-y-1/2 gap-1 rounded-md bg-neutral-900/95 px-1 py-0.5 shadow-lg group-hover:flex">
-                  <button
-                    onClick={() => onAnalyze(font.id)}
-                    className="rounded px-2 py-0.5 text-xs text-blue-400 transition-colors hover:bg-blue-500/10"
-                    title="Analyze"
-                  >
-                    Analyze
-                  </button>
-                  {!IS_STATIC && (<>
-                  <button
-                    onClick={() => onRefresh(font.id)}
-                    className="rounded px-2 py-0.5 text-xs text-emerald-400 transition-colors hover:bg-emerald-500/10"
-                    title="Refresh from disk"
-                  >
-                    Refresh
-                  </button>
-                  <button
-                    onClick={() => onEditPath(font.id, font.filePath)}
-                    className="rounded px-2 py-0.5 text-xs text-amber-400 transition-colors hover:bg-amber-500/10"
-                    title="Update path"
-                  >
-                    Path
-                  </button>
-                  <button
-                    onClick={() => onDelete(font.id)}
-                    className="rounded px-2 py-0.5 text-xs text-red-400 transition-colors hover:bg-red-500/10"
-                    title="Remove"
-                  >
-                    Remove
-                  </button>
-                  </>)}
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Grid view: GridFamilyCard                                          */
-/* ------------------------------------------------------------------ */
-
-function pickPreviewFont(fonts: StoredFontMeta[]): StoredFontMeta {
-  const variables = fonts.filter((f) => f.isVariable && f.variableAxes?.length);
-  if (variables.length > 0) {
-    const best = variables.reduce((a, b) => (b.variableAxes!.length > a.variableAxes!.length ? b : a));
-    return best;
-  }
-  const regular = fonts.find((f) => f.weight >= 380 && f.weight <= 420 && f.style === 'normal');
-  return regular ?? fonts.find((f) => f.style === 'normal') ?? fonts[0];
-}
-
-function categoryTitle(category: FontCategory, resolved?: ResolvedCategory): string {
-  const name = resolved?.slab ? 'slab serif' : category;
-  if (resolved?.origin === 'override') return `Category: ${name} (your edit)`;
-  if (resolved?.origin === 'analysis') return `Category: ${name} (extended tag, from the outline analysis)`;
-  return `Category: ${name} (from the file metadata)`;
-}
-
-const SOURCE_INFO = {
-  both: 'Local + Google Fonts: this family is in a scanned local folder and in the Google Fonts library.',
-  google: 'Google Fonts: this family comes from the Google Fonts library (github.com/google/fonts).',
-  local: 'Local font: this family comes from a folder that you scanned on this computer.',
-};
-
-const VF_INFO = 'Variable font: one file holds a continuous range of styles along its axes. Use the weight scale on the left and the axis control on the right to move along the axes.';
-
-// Lowercase category labels per Figma design.
-const CAT_LABELS: Record<string, string> = {
-  'serif': 'serif',
-  'sans-serif': 'sans',
-  'monospace': 'mono',
-  'display': 'display',
-  'script': 'script',
-};
-
-// Neon foreground on a darkened (≈ fg × 0.5 over black) background, per design.
-const CAT_TOKENS: Record<string, { fg: string; bg: string }> = {
-  'sans-serif': { fg: '#00ff6a', bg: '#008035' },
-  'serif': { fg: '#ff3b3b', bg: '#801e1e' },
-  'monospace': { fg: '#00ffd1', bg: '#00806a' },
-  'display': { fg: '#c46bff', bg: '#623580' },
-  'script': { fg: '#ffb000', bg: '#805800' },
-};
-
-/* ---- Tile leaf components (Figma "bg" frame 1681:269) ---------------- */
-
-// A coloured segment in the contiguous top row.
-// `overlappedEnd`: the next segment overlaps this one by 5cqw (its notch), so
-// the end padding grows by the same amount to keep the label visible.
-function TopSegment({ children, fg, bg, roundedBl, overlappedEnd, title, onClick, describedBy, label, className = '' }: {
-  children: ReactNode;
-  fg: string;
-  bg: string;
-  roundedBl?: boolean;
-  overlappedEnd?: boolean;
-  title?: string;
-  onClick?: (e: ReactMouseEvent) => void;
-  describedBy?: string;
-  label?: string;
-  className?: string;
-}) {
-  return (
-    <div
-      title={title}
-      onClick={onClick}
-      tabIndex={describedBy ? 0 : undefined}
-      role={describedBy && !onClick ? 'note' : undefined}
-      aria-label={label}
-      aria-describedby={describedBy}
-      className={`font-ui flex h-full items-center justify-center overflow-hidden pl-[2.5cqw] leading-none outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white ${roundedBl ? 'rounded-bl-[5cqw]' : ''} ${onClick ? 'cursor-pointer' : ''} ${className}`}
-      style={{ color: fg, background: bg, fontWeight: 300, fontSize: 'clamp(9px,3.4cqw,13px)', paddingRight: overlappedEnd ? '7.5cqw' : '2.5cqw' }}
-    >
-      {children}
-    </div>
-  );
-}
-
-// Source marker segment (rightmost top-row tag).
-function SourceTag({ source, sources }: { source?: string; sources?: string[] }) {
-  const hasBoth = sources && sources.includes('local') && sources.includes('google');
-  const kind = hasBoth ? 'both' : source === 'google' ? 'google' : 'local';
-  const look = {
-    both: { fg: '#c084fc', bg: '#3b2a5c', text: 'l+g', label: 'Local and Google Fonts' },
-    google: { fg: '#0095ff', bg: '#194a6e', text: 'g', label: 'Google Fonts' },
-    local: { fg: '#ff9500', bg: '#5c3a10', text: 'l', label: 'Local font' },
-  }[kind];
-  return (
-    <Tip text={SOURCE_INFO[kind]} align="end" className="relative z-20 ml-[-5cqw] flex shrink-0">
-      {(tipId) => (
-        <TopSegment fg={look.fg} bg={look.bg} roundedBl label={look.label} describedBy={tipId}>{look.text}</TopSegment>
-      )}
-    </Tip>
-  );
-}
-
-// Vertical weight scale. Stepped (static, snaps to available files) or fluid (variable axis, step 50).
-// The ruler shows the lightest weight at the top, so the range minimum must be
-// at the top too: vertical writing mode, left-to-right (top-to-bottom) direction.
-const RULER_INPUT_STYLE: CSSProperties = { writingMode: 'vertical-lr', direction: 'ltr' };
-
-function WeightRuler({ mode, weights, axisMin, axisMax, value, onChange }: {
-  mode: 'stepped' | 'fluid';
-  weights?: number[];
-  axisMin?: number;
-  axisMax?: number;
-  value: number;
-  onChange: (v: number) => void;
-}) {
-  const stepped = mode === 'stepped';
-  const rmin = stepped ? (weights![0] ?? 0) : (axisMin ?? 0);
-  const rmax = stepped ? (weights![weights!.length - 1] ?? rmin) : (axisMax ?? rmin);
-  const span = (rmax - rmin) || 1;
-  const interactive = rmax !== rmin;
-  // Lighter at top → heavier at bottom. Ticks are inset by PAD% from the
-  // top/bottom edges so the topmost label clears the top bar; a single
-  // available weight (no range) sits centered rather than pinned to the top.
-  const PAD = 14;
-  const place = (v: number) => (interactive ? PAD + ((v - rmin) / span) * (100 - 2 * PAD) : 50);
-  // Labels closer than 10% of the scale height overlap.
-  const nearValue = (v: number) => Math.abs(place(v) - place(value)) < 10;
-
-  const ticks = stepped
-    ? weights!.map((w) => ({ v: w, label: String(w), major: w === value, visible: w === value || w === rmin || w === rmax }))
-    : [
-        // An end label near the current value would overlap its label: hide it.
-        { v: rmin, label: String(Math.round(rmin)), major: false, visible: !nearValue(rmin) },
-        { v: rmax, label: String(Math.round(rmax)), major: false, visible: !nearValue(rmax) },
-        { v: value, label: String(Math.round(value)), major: true, visible: true },
-      ];
-
-  return (
-    <div className="relative flex shrink-0 select-none" style={{ width: 'clamp(30px,13cqw,42px)' }} onClick={(e) => e.stopPropagation()}>
-      <div className="relative flex-1">
-        {ticks.map((t, i) => (
-          <div
-            key={`${t.v}-${i}`}
-            className="absolute left-0 flex items-center gap-[1.5cqw]"
-            style={{ top: `${place(t.v)}%`, transform: 'translateY(-50%)', opacity: t.visible ? 1 : 0, pointerEvents: t.visible ? 'auto' : 'none' }}
-          >
-            <button
-              type="button"
-              onClick={() => onChange(t.v)}
-              aria-label={`Weight ${t.label}`}
-              style={{ height: t.major ? 2 : 1, width: 'clamp(8px,3.5cqw,16px)', background: t.major ? '#fff' : '#808080' }}
-            />
-            <span
-              className="font-ui tabular-nums leading-none"
-              style={{ fontSize: t.major ? 'clamp(10px,3.6cqw,13px)' : 'clamp(9px,3cqw,11px)', color: t.major ? '#fff' : '#808080', fontWeight: t.major ? 500 : 400 }}
-            >
-              {t.label}
-            </span>
-          </div>
-        ))}
-        {interactive && (
-          stepped ? (
-            <input
-              type="range" aria-label="Weight"
-              min={0} max={weights!.length - 1} step={1}
-              value={Math.max(0, weights!.indexOf(value))}
-              onChange={(e) => onChange(weights![parseInt(e.target.value, 10)])}
-              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-              style={RULER_INPUT_STYLE}
-            />
-          ) : (
-            <input
-              type="range" aria-label="Weight" aria-valuetext={String(Math.round(value))}
-              min={rmin} max={rmax} step={50}
-              value={value}
-              onChange={(e) => onChange(parseFloat(e.target.value))}
-              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-              style={RULER_INPUT_STYLE}
-            />
-          )
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Bottom regular/italic (or oblique) picker.
-function SlantPicker({ italic, italicLabel, onChange }: { italic: boolean; italicLabel: string; onChange: (b: boolean) => void }) {
-  const Opt = ({ active, text, on }: { active: boolean; text: string; on: () => void }) => (
-    <button type="button" onClick={on} className="flex flex-col items-center gap-[1.5cqw]">
-      <span className="font-ui leading-none" style={{ color: active ? '#fff' : '#808080', fontSize: active ? 'clamp(11px,4cqw,14px)' : 'clamp(10px,3.4cqw,12px)', fontWeight: 500 }}>{text}</span>
-      <span style={{ height: 2, width: 'clamp(14px,6cqw,22px)', background: active ? '#fff' : 'rgba(255,255,255,0.3)' }} />
-    </button>
-  );
-  return (
-    <div className="flex items-end justify-center gap-[10cqw]" onClick={(e) => e.stopPropagation()}>
-      <Opt active={!italic} text="regular" on={() => onChange(false)} />
-      <Opt active={italic} text={italicLabel} on={() => onChange(true)} />
-    </div>
-  );
-}
-
-// Right-edge control: a rotated current-value label with a tick, plus a dropdown
-// to switch which axis/width is being controlled. `continuous` drives a hidden
-// vertical slider for variable axes; absent for static width selection.
-function EdgeAxisControl({ items, activeTag, onSelectItem, currentLabel, continuous }: {
-  items: { tag: string; name: string }[];
-  activeTag: string;
-  onSelectItem: (tag: string) => void;
-  currentLabel: string;
-  continuous?: { min: number; max: number; step: number; value: number; onChange: (v: number) => void };
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, [open]);
-
-  return (
-    <div ref={ref} className="relative flex shrink-0 flex-col items-center justify-center" style={{ width: 'clamp(28px,12cqw,40px)' }} onClick={(e) => e.stopPropagation()}>
-      {continuous && (
-        <div className="relative flex w-full flex-1 items-center justify-center">
-          <div className="absolute inset-y-[6cqw] w-px bg-neutral-600" />
-          <input
-            type="range" aria-label={activeTag}
-            min={continuous.min} max={continuous.max} step={continuous.step}
-            value={continuous.value}
-            onChange={(e) => continuous.onChange(parseFloat(e.target.value))}
-            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-            style={{ writingMode: 'vertical-lr', direction: 'rtl' }}
-          />
-        </div>
-      )}
-      <button
-        type="button"
-        onClick={() => items.length > 1 && setOpen((o) => !o)}
-        className="flex items-center justify-center"
-        style={{ minHeight: 'clamp(36px,16cqw,60px)' }}
-        aria-label={items.length > 1 ? `${currentLabel}, select another axis` : currentLabel}
-      >
-        <span className="font-ui whitespace-nowrap leading-none text-white" style={{ transform: 'rotate(-35deg)', fontSize: 'clamp(10px,3.6cqw,13px)', fontWeight: 500 }}>
-          {currentLabel}
-        </span>
-      </button>
-      {open && (
-        <div className="absolute right-0 top-1 z-30 w-32 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-xl">
-          {items.map((it) => (
-            <button
-              key={it.tag}
-              type="button"
-              onClick={() => { onSelectItem(it.tag); setOpen(false); }}
-              className={`block w-full px-3 py-1 text-left text-[11px] transition-colors hover:bg-neutral-800 ${it.tag === activeTag ? 'text-blue-400' : 'text-neutral-300'}`}
-            >
-              {it.name}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-interface GridFamilyCardProps {
-  family: FontFamily;
-  selected: Set<string>;
-  onAnalyze: (id: string) => void;
-  onToggleStar: (family: FontFamily) => void;
-  onToggleSelect: (id: string) => void;
-  onCategoryOverride?: (family: FontFamily, cat: FontCategory) => void;
-  bulkEditMode?: boolean;
-  bulkSelected?: boolean;
-  onBulkToggle?: (familyName: string) => void;
-  resolved?: ResolvedCategory;
-}
-
-function axisRange(a: { minValue: number; maxValue: number }): string {
-  return `${Math.round(a.minValue * 10) / 10}–${Math.round(a.maxValue * 10) / 10}`;
-}
-
-function GridFamilyCard({ family, selected, onAnalyze, onToggleStar, onToggleSelect, onCategoryOverride, bulkEditMode, bulkSelected, onBulkToggle, resolved }: GridFamilyCardProps) {
-  const previewFont = useMemo(() => pickPreviewFont(family.fonts), [family.fonts]);
-  const [showVariants, setShowVariants] = useState(false);
-  const [showCatPopover, setShowCatPopover] = useState(false);
-  const popoverRef = useRef<HTMLDivElement>(null);
-  const catPopoverRef = useRef<HTMLDivElement>(null);
-
-  const axes = useMemo(() => previewFont.variableAxes ?? [], [previewFont]);
-  const wghtAxis = useMemo(() => axes.find((a) => a.tag === 'wght'), [axes]);
-  const italAxis = useMemo(() => axes.find((a) => a.tag === 'ital' || a.tag === 'slnt'), [axes]);
-  const rightAxes = useMemo(() => axes.filter((a) => a.tag !== 'wght' && a.tag !== 'ital' && a.tag !== 'slnt'), [axes]);
-  const isVariable = previewFont.isVariable === true && axes.length > 0;
-
-  // Width groups (static families with multiple widths).
-  const widthGroups = useMemo(() => groupByWidth(family.fonts), [family.fonts]);
-  const widthKeys = useMemo(() => Array.from(widthGroups.keys()), [widthGroups]);
-  const [widthKey, setWidthKey] = useState(() => widthKeys[0] ?? 'Default');
-  useEffect(() => {
-    if (!widthKeys.includes(widthKey)) setWidthKey(widthKeys[0] ?? 'Default');
-  }, [widthKeys, widthKey]);
-
-  const [italic, setItalic] = useState(false);
-  const [staticWeight, setStaticWeight] = useState(() => previewFont.weight);
-
-  const [axisValues, setAxisValues] = useState<Record<string, number>>(() =>
-    Object.fromEntries(axes.map((a) => [a.tag, a.defaultValue]))
-  );
-  const updateAxis = useCallback((tag: string, val: number) => {
-    setAxisValues((prev) => ({ ...prev, [tag]: val }));
-  }, []);
-
-  // Selectable variable axis on the right edge (wdth preferred).
-  const [activeRightTag, setActiveRightTag] = useState<string>(() => rightAxes[0]?.tag ?? '');
-  useEffect(() => {
-    if (rightAxes.length && !rightAxes.some((a) => a.tag === activeRightTag)) setActiveRightTag(rightAxes[0].tag);
-  }, [rightAxes, activeRightTag]);
-
-  // Static-font weight pool for the current width + slant.
-  const group = widthGroups.get(widthKey) ?? { normal: [], italic: [] };
-  const pool = italic
-    ? (group.italic.length ? group.italic : group.normal)
-    : (group.normal.length ? group.normal : group.italic);
-  const availableWeights = useMemo(() => uniqueSortedWeights(pool), [pool]);
-  const effWeight = availableWeights.includes(staticWeight)
-    ? staticWeight
-    : (availableWeights.reduce((a, b) => (Math.abs(b - staticWeight) < Math.abs(a - staticWeight) ? b : a), availableWeights[0] ?? staticWeight));
-
-  // Resolve the actual font file to render/analyze.
-  const currentFont = isVariable
-    ? previewFont
-    : (fontForWeightStyleWidth(family.fonts, effWeight, widthKey === 'Default' ? null : widthKey, italic) ?? previewFont);
-  const { fontFamily, loading, ref } = useFontFace(currentFont.id);
-
-  const fontVariationSettings = useMemo(() => {
-    if (!isVariable) return undefined;
-    const entries: Record<string, number> = { ...axisValues };
-    if (italAxis) entries[italAxis.tag] = italAxis.tag === 'ital' ? (italic ? 1 : 0) : (italic ? italAxis.maxValue : 0);
-    return Object.entries(entries).map(([tag, val]) => `'${tag}' ${val}`).join(', ');
-  }, [isVariable, axisValues, italAxis, italic]);
-
-  useEffect(() => {
-    if (!showVariants) return;
-    const onClickOutside = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) setShowVariants(false);
-    };
-    document.addEventListener('mousedown', onClickOutside);
-    return () => document.removeEventListener('mousedown', onClickOutside);
-  }, [showVariants]);
-
-  useEffect(() => {
-    if (!showCatPopover) return;
-    const handler = (e: MouseEvent) => {
-      if (catPopoverRef.current && !catPopoverRef.current.contains(e.target as Node)) setShowCatPopover(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showCatPopover]);
-
-  const anySelected = family.fonts.some((f) => selected.has(f.id));
-  const effectiveCategory = resolved?.category ?? previewFont.categoryOverride ?? previewFont.category;
-  const catToken = effectiveCategory ? CAT_TOKENS[effectiveCategory] : undefined;
-
-  const canItalic = isVariable ? !!italAxis : family.fonts.some((f) => f.style !== 'normal');
-  const italicLabel = (isVariable && italAxis?.tag === 'slnt') || family.fonts.some((f) => f.style === 'oblique') ? 'oblique' : 'italic';
-
-  const showWeightRuler = isVariable ? !!wghtAxis : availableWeights.length > 0;
-  const showRight = isVariable ? rightAxes.length > 0 : widthKeys.length > 1;
-  const activeAxis = rightAxes.find((a) => a.tag === activeRightTag);
-
-  const countInfo = isVariable
-    ? (
-      <>
-        <span className="mb-0.5 block font-medium text-white">Variable axes</span>
-        {axes.map((a) => (
-          <span key={a.tag} className="block tabular-nums">{getAxisInfo(a.tag, a.name).name} <span className="text-neutral-500">({a.tag})</span> {axisRange(a)}</span>
-        ))}
-      </>
-    )
-    : `${family.fonts.length} static style${family.fonts.length !== 1 ? 's' : ''}: each style is a separate font file.`;
-
-  const wghtInfo = isVariable && wghtAxis
-    ? `Weight axis (wght), ${axisRange(wghtAxis)}. Drag up for lighter and down for bolder. ${getAxisInfo('wght').description}`
-    : `Weight: the weights that this family has as static files (${availableWeights.join(', ')}). Drag to show another file.`;
-
-  const rightInfo = isVariable && activeAxis
-    ? `${getAxisInfo(activeAxis.tag, activeAxis.name).name} axis (${activeAxis.tag}), ${axisRange(activeAxis)}. Drag up or down to change. ${getAxisInfo(activeAxis.tag, activeAxis.name).description}${rightAxes.length > 1 ? ' Click the value to select another axis.' : ''}`
-    : `Width: this family has ${widthKeys.length} widths as static files. Click the value to select another width.`;
-
-  const compareInfo = anySelected
-    ? `${selected.size} font${selected.size !== 1 ? 's' : ''} selected for comparison. Click to change the selection. Open the Compare tab to see them side by side.`
-    : family.fonts.length === 1
-      ? 'Add to compare: select this font to compare it side by side with other fonts in the Compare tab.'
-      : 'Add to compare: select styles of this family to compare them side by side in the Compare tab.';
-
-  const countLabel = isVariable
-    ? `${axes.length} ${axes.length === 1 ? 'axis' : 'axes'}`
-    : `${family.fonts.length} style${family.fonts.length !== 1 ? 's' : ''}`;
-
-  const analyze = () => bulkEditMode ? onBulkToggle?.(family.familyName) : onAnalyze(currentFont.id);
-
-  // True when the user previews a non-default weight / width / axis value, so
-  // that the weight ruler label can collide with a centered "+". The slant
-  // (regular/italic) does not change the ruler, so it does not move the "+".
-  const variantModified = isVariable
-    ? axes.some((a) => a.tag !== italAxis?.tag && (axisValues[a.tag] ?? a.defaultValue) !== a.defaultValue)
-    : staticWeight !== previewFont.weight || widthKey !== (widthKeys[0] ?? 'Default');
-
-  return (
-    <div
-      ref={ref}
-      className={`@container group relative flex flex-col rounded-b-[12px] bg-[#080808] transition-shadow hover:z-30 focus-within:z-30 ${showCatPopover || showVariants ? 'z-30' : ''} ${bulkSelected ? 'ring-2 ring-orange-500' : 'ring-1 ring-neutral-800/60 hover:ring-neutral-600'}`}
-      data-testid="grid-card"
-    >
-      {/* Top row: fav · category · count · vf · source */}
-      <div className="flex w-full items-stretch" style={{ height: 'clamp(24px,9cqw,34px)' }}>
-        {bulkEditMode ? (
-          <label className="relative z-10 flex h-full shrink-0 items-center justify-center rounded-br-[5cqw] bg-[#515151] px-[2.5cqw]" onClick={(e) => e.stopPropagation()}>
-            <input
-              type="checkbox"
-              checked={bulkSelected ?? false}
-              onChange={() => onBulkToggle?.(family.familyName)}
-              className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-800 accent-orange-500"
-            />
-          </label>
-        ) : (
-          <button
-            onClick={(e) => { e.stopPropagation(); onToggleStar(family); }}
-            className="relative z-10 flex h-full shrink-0 items-center justify-center rounded-br-[5cqw] bg-[#515151] px-[2.5cqw] leading-none"
-            style={{ fontSize: 'clamp(11px,4cqw,15px)' }}
-            title={family.starred ? 'Unstar family' : 'Star family'}
-          >
-            {family.starred
-              ? <span className="text-white">&#9733;</span>
-              : <span className="transition-colors hover:text-white" style={{ color: '#797979', textShadow: '0 -1px 1px rgba(0,0,0,0.7), 0 1px 1px rgba(255,255,255,0.12)' }}>&#9733;</span>}
-          </button>
-        )}
-
-        {effectiveCategory && catToken && (
-          <div className="relative ml-[-5cqw] flex min-w-0 flex-1">
-            <TopSegment
-              fg={catToken.fg}
-              bg={catToken.bg}
-              title={categoryTitle(effectiveCategory, resolved)}
-              onClick={(e) => { e.stopPropagation(); setShowCatPopover((v) => !v); }}
-              className="w-full"
-            >
-              <span className="truncate">{resolved?.slab ? 'slab' : (CAT_LABELS[effectiveCategory] ?? effectiveCategory)}</span>
-              {resolved?.origin === 'analysis' && <span aria-hidden className="ml-[1cqw] opacity-70">*</span>}
-            </TopSegment>
-            {showCatPopover && (
-              <div
-                ref={catPopoverRef}
-                className="absolute left-0 top-full z-30 mt-1 w-36 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-xl"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="border-b border-neutral-800 px-3 py-1">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Set Category</span>
-                </div>
-                {CATEGORIES.map((cat) => (
-                  <button
-                    key={cat.id}
-                    onClick={(e) => { e.stopPropagation(); onCategoryOverride?.(family, cat.id); setShowCatPopover(false); }}
-                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-neutral-800 ${effectiveCategory === cat.id ? 'text-blue-400' : 'text-neutral-300'}`}
-                  >
-                    {effectiveCategory === cat.id && <span className="text-blue-400">&#10003;</span>}
-                    <span className={effectiveCategory === cat.id ? '' : 'ml-5'}>{cat.label}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        <Tip text={countInfo} className="flex min-w-0 flex-1">
-          {(tipId) => (
-            <TopSegment fg="#ffffff" bg="#666666" describedBy={tipId} label={countLabel} overlappedEnd={family.hasVariable} className="min-w-0 flex-1">
-              <span className="truncate tabular-nums" style={{ fontFeatureSettings: '"onum" 1, "tnum" 1' }}>{countLabel}</span>
-            </TopSegment>
-          )}
-        </Tip>
-
-        {family.hasVariable && (
-          <Tip text={VF_INFO} align="end" className="relative z-10 ml-[-5cqw] flex shrink-0">
-            {(tipId) => (
-              <TopSegment fg="#00fff2" bg="#008f88" roundedBl overlappedEnd label="Variable font" describedBy={tipId}>vf</TopSegment>
-            )}
-          </Tip>
-        )}
-        <SourceTag source={family.source} sources={family.sources} />
-      </div>
-
-      {showVariants && (
-        <div
-          ref={popoverRef}
-          className="absolute right-1 top-10 z-20 w-48 rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="border-b border-neutral-800 px-3 py-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Add to compare</span>
-          </div>
-          <div className="max-h-48 overflow-y-auto py-1">
-            {family.fonts.map((f) => (
-              <label key={f.id} className="flex cursor-pointer items-center gap-2 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-800">
-                <input type="checkbox" checked={selected.has(f.id)} onChange={() => onToggleSelect(f.id)} className="h-3 w-3 rounded border-neutral-600 bg-neutral-800 accent-blue-500" />
-                <span className="truncate">{variantLabel(f)}</span>
-                <span className="ml-auto shrink-0 tabular-nums text-neutral-600">{f.weight}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Body: weight ruler · specimen · right axis */}
-      <div
-        className="relative flex flex-1 cursor-pointer items-stretch px-[2cqw] pb-[2cqw] pt-[1cqw]"
-        style={{ minHeight: 'clamp(150px,56cqw,212px)' }}
-        onClick={analyze}
-      >
-        {/* Add-to-compare "+" — centered below the top row */}
-        <Tip
-          text={compareInfo}
-          align={variantModified ? 'start' : 'center'}
-          className={`absolute top-[1cqw] z-20 transition-all ${variantModified ? 'left-[18cqw]' : 'left-1/2 -translate-x-1/2'}`}
-        >
-          {(tipId) => (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (family.fonts.length === 1) onToggleSelect(currentFont.id);
-                else setShowVariants((v) => !v);
-              }}
-              className="font-ui leading-none"
-              style={{ fontSize: 'clamp(16px,8cqw,28px)', fontWeight: anySelected ? 600 : 900, color: anySelected ? '#ffffff' : '#666666' }}
-              aria-label={anySelected ? `Compare selection: ${selected.size} fonts` : `Add ${family.familyName} to compare`}
-              aria-describedby={tipId}
-              aria-haspopup={family.fonts.length > 1 ? 'dialog' : undefined}
-              aria-expanded={family.fonts.length > 1 ? showVariants : undefined}
-              data-testid="compare-plus"
-            >
-              {anySelected ? selected.size : '+'}
-            </button>
-          )}
-        </Tip>
-
-        {/* Side controls are absolute overlays so the specimen stays centered */}
-        {showWeightRuler && (
-          <Tip text={wghtInfo} side="right" className="absolute inset-y-[2cqw] left-[2cqw] z-10 flex">
-            {(tipId) => (<div className="flex" aria-describedby={tipId} role="group" aria-label="Weight">
-            {isVariable
-              ? <WeightRuler mode="fluid" axisMin={wghtAxis!.minValue} axisMax={wghtAxis!.maxValue} value={axisValues[wghtAxis!.tag] ?? wghtAxis!.defaultValue} onChange={(v) => updateAxis(wghtAxis!.tag, v)} />
-              : <WeightRuler mode="stepped" weights={availableWeights} value={effWeight} onChange={(w) => setStaticWeight(w)} />}
-            </div>)}
-          </Tip>
-        )}
-
-        {/* Center specimen */}
-        <div className="flex min-w-0 flex-1 flex-col items-center justify-center">
-          <div className="flex w-full items-center justify-center overflow-x-clip text-white" style={{ height: 'clamp(70px,30cqw,120px)' }}>
-            {loading ? (
-              <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-700 border-t-white" />
-            ) : (
-              <span
-                className="transition-opacity"
-                style={{
-                  fontFamily: fontFamily ? `'${fontFamily}', serif` : 'serif',
-                  fontSize: 'clamp(40px,20cqw,72px)',
-                  lineHeight: 1,
-                  opacity: fontFamily ? 1 : 0.3,
-                  fontVariationSettings: fontFamily ? fontVariationSettings : undefined,
-                }}
-                data-testid="grid-card-preview"
-              >
-                Aa
-              </span>
-            )}
-          </div>
-          <h3
-            className="font-ui mt-[2cqw] w-full truncate text-center text-white"
-            style={{ fontSize: 'clamp(13px,6cqw,20px)', fontWeight: 500 }}
-            title={family.familyName}
-          >
-            {family.familyName}
-          </h3>
-        </div>
-
-        {showRight && (
-          <Tip text={rightInfo} side="left" className="absolute inset-y-[2cqw] right-[2cqw] z-10 flex">
-          {(tipId) => (<div className="flex" aria-describedby={tipId} role="group" aria-label={isVariable && activeAxis ? getAxisInfo(activeAxis.tag, activeAxis.name).name : 'Width'}>
-          {isVariable && activeAxis
-            ? <EdgeAxisControl
-                items={rightAxes.map((a) => ({ tag: a.tag, name: getAxisInfo(a.tag, a.name).name }))}
-                activeTag={activeRightTag}
-                onSelectItem={setActiveRightTag}
-                currentLabel={String(Math.round(axisValues[activeAxis.tag] ?? activeAxis.defaultValue))}
-                continuous={{
-                  min: activeAxis.minValue,
-                  max: activeAxis.maxValue,
-                  step: activeAxis.maxValue - activeAxis.minValue > 10 ? 1 : 0.1,
-                  value: axisValues[activeAxis.tag] ?? activeAxis.defaultValue,
-                  onChange: (v) => updateAxis(activeAxis.tag, v),
-                }}
+          <div className="dock">
+            {bulk && (
+              <BulkBar
+                count={bulkSel.size}
+                onSelectAll={() => setBulkSel(new Set(visible.map((f) => f.familyName)))}
+                onCategory={(anchor) => setMenu({ kind: 'bulk', anchor })}
+                onDone={toggleBulk}
               />
-            : !isVariable
-              ? <EdgeAxisControl
-                  items={widthKeys.map((w) => ({ tag: w, name: w }))}
-                  activeTag={widthKey}
-                  onSelectItem={setWidthKey}
-                  currentLabel={widthKey === 'Default' ? 'normal' : widthKey}
-                />
-              : null}
-          </div>)}
-          </Tip>
-        )}
+            )}
+            {compare.length > 0 && (
+              <CompareTray
+                entries={compare}
+                onRemove={(key) => setCompare((prev) => prev.filter((e) => e.key !== key))}
+                onClear={() => setCompare([])}
+                onCompare={() => navigate(`/compare?ids=${compareParam(compare)}`)}
+              />
+            )}
+          </div>
+        </main>
       </div>
-
-      {/* Bottom: regular / italic picker */}
-      {canItalic && (
-        <div className="pb-[3cqw] pt-[1cqw]">
-          <SlantPicker italic={italic} italicLabel={italicLabel} onChange={setItalic} />
-        </div>
-      )}
+      {renderMenu()}
+      <Toast message={toast.message} visible={toast.visible} />
     </div>
   );
 }

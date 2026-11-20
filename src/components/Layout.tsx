@@ -8,29 +8,18 @@ const NAV_ITEMS = [
 
 export function Layout() {
   return (
-    <div className="flex h-screen flex-col bg-neutral-950 text-neutral-200">
-      <nav className="flex items-center gap-1 border-b border-neutral-800 px-4 py-2">
-        <span className="mr-4 text-sm font-bold tracking-tight text-white">
-          Font Analyzer
-        </span>
-        {NAV_ITEMS.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === '/'}
-            className={({ isActive }) =>
-              `rounded-md px-3 py-1.5 text-sm transition-colors ${
-                isActive
-                  ? 'bg-neutral-800 text-white'
-                  : 'text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200'
-              }`
-            }
-          >
-            {item.label}
-          </NavLink>
-        ))}
-      </nav>
-      <div className="flex-1 overflow-hidden">
+    <div className="app">
+      <header className="topnav">
+        <span className="brand">Font Analyzer</span>
+        <nav className="tabs" aria-label="Primary">
+          {NAV_ITEMS.map((item) => (
+            <NavLink key={item.to} to={item.to} end={item.to === '/'} className="tab">
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+      </header>
+      <div className="app-main">
         <Outlet />
       </div>
     </div>
