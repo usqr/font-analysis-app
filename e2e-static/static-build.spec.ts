@@ -21,6 +21,16 @@ test.describe('Static (GitHub Pages) build', () => {
     expect(apiCalls).toEqual([]);
   });
 
+  test('the UI fonts load from the app, not from Google Fonts', async ({ page }) => {
+    const external: string[] = [];
+    page.on('request', (req) => { if (/fonts\.(googleapis|gstatic)\.com/.test(req.url())) external.push(req.url()); });
+    await page.goto('/#/compare');
+    const loaded = await page.evaluate(async () =>
+      [await document.fonts.load('500 16px Geist'), await document.fonts.load('16px "Geist Mono"')].map((f) => f.length));
+    expect(loaded).toEqual([1, 1]);
+    expect(external).toEqual([]);
+  });
+
   test('tile previews load font files from the CDN', async ({ page }) => {
     const fontResponse = page.waitForResponse((res) => res.url().startsWith('https://cdn.jsdelivr.net/gh/google/fonts@'));
     await page.goto('/');

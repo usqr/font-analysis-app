@@ -1,14 +1,10 @@
-import type { CSSProperties, Dispatch, ReactNode, SetStateAction } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import type { FontData, VariableAxis } from '../../types';
 import { getAxisInfo } from '../../lib/axisDescriptions';
+import { pctOf, signedInt } from '../../lib/format';
 import { OTF_FEATURE_NAMES } from '../../lib/otfFeatures';
-
-export interface Stat { label: string; value: string }
-export interface RawMetaSection { title: string; entries: { label: string; value: string }[] }
-
-const MINUS = '−';
-const signed = (n: number) => (n < 0 ? `${MINUS}${Math.abs(n)}` : String(n));
-const pct = (v: number, a: VariableAxis) => `${((v - a.minValue) / (a.maxValue - a.minValue || 1)) * 100}%`;
+import type { RawMetaSection } from '../../lib/rawMetadata';
+import type { Stat } from '../../lib/summaryStats';
 
 function Section({ id, title, count, children }: { id: string; title: string; count?: string; children: ReactNode }) {
   return (
@@ -22,12 +18,12 @@ function Section({ id, title, count, children }: { id: string; title: string; co
   );
 }
 
-function AxisControls({ axes, values, setValues, previewFamily }: {
-  axes: VariableAxis[];
-  values: Record<string, number>;
-  setValues: Dispatch<SetStateAction<Record<string, number>>>;
-  previewFamily: string | null;
-}) {
+/** Sliders for the axes of a variable font. A new list of axes (a new font) resets the values. */
+function AxisControls({ axes, previewFamily }: { axes: VariableAxis[]; previewFamily: string | null }) {
+  const [state, setState] = useState<{ axes: VariableAxis[]; values: Record<string, number> }>({ axes, values: {} });
+  if (state.axes !== axes) setState({ axes, values: {} });
+  const { values } = state;
+  const setValue = (tag: string, v: number) => setState((s) => ({ ...s, values: { ...s.values, [tag]: v } }));
   const settings = Object.entries(values).map(([t, v]) => `'${t}' ${v}`).join(', ');
   return (
     <>
@@ -43,14 +39,14 @@ function AxisControls({ axes, values, setValues, previewFamily }: {
             </div>
             <input
               className="slider" type="range" min={a.minValue} max={a.maxValue} step={fine ? 0.01 : 1} value={v}
-              style={{ '--p': pct(v, a) } as CSSProperties}
+              style={{ '--p': pctOf(v, a.minValue, a.maxValue) } as CSSProperties}
               aria-label={`${info.name} (${a.tag})`}
-              onChange={(e) => setValues((prev) => ({ ...prev, [a.tag]: Number(e.target.value) }))}
+              onChange={(e) => setValue(a.tag, Number(e.target.value))}
             />
           </div>
         );
       })}
-      <button type="button" className="btn btn-ghost btn-sm axis-reset" onClick={() => setValues(Object.fromEntries(axes.map((a) => [a.tag, a.defaultValue])))}>
+      <button type="button" className="btn btn-ghost btn-sm axis-reset" onClick={() => setState({ axes, values: {} })}>
         Reset axes
       </button>
       {previewFamily && (
@@ -62,13 +58,11 @@ function AxisControls({ axes, values, setValues, previewFamily }: {
   );
 }
 
-export function AnalysisSide({ stats, fontData, filePath, axes, axisValues, setAxisValues, previewFamily, features, rawMeta }: {
+export function AnalysisSide({ stats, fontData, filePath, axes, previewFamily, features, rawMeta }: {
   stats: Stat[];
   fontData: FontData;
   filePath?: string;
   axes: VariableAxis[];
-  axisValues: Record<string, number>;
-  setAxisValues: Dispatch<SetStateAction<Record<string, number>>>;
   previewFamily: string | null;
   features: string[];
   rawMeta: RawMetaSection[];
@@ -77,8 +71,8 @@ export function AnalysisSide({ stats, fontData, filePath, axes, axisValues, setA
     ['Family', fontData.familyName, false],
     ['Style', fontData.styleName, false],
     ['UPM', String(fontData.unitsPerEm), true],
-    ['Ascender', signed(fontData.ascender), true],
-    ['Descender', signed(fontData.descender), true],
+    ['Ascender', signedInt(fontData.ascender), true],
+    ['Descender', signedInt(fontData.descender), true],
     ['Glyphs', String(fontData.glyphCount), true],
   ];
   if (filePath) info.push(['File', filePath, false]);
@@ -95,7 +89,7 @@ export function AnalysisSide({ stats, fontData, filePath, axes, axisValues, setA
       </Section>
       {axes.length > 0 && (
         <Section id="h-axes" title="Variable axes" count={`${axes.length} ${axes.length === 1 ? 'axis' : 'axes'}`}>
-          <AxisControls axes={axes} values={axisValues} setValues={setAxisValues} previewFamily={previewFamily} />
+          <AxisControls axes={axes} previewFamily={previewFamily} />
         </Section>
       )}
       {features.length > 0 && (

@@ -104,6 +104,32 @@ test.describe('Library features', () => {
     await expect(bar).toHaveCount(0);
   });
 
+  test('bulk edit ignores selected families that the filters hide', async ({ page }) => {
+    await page.getByRole('button', { name: 'Bulk Edit' }).click();
+    const bar = page.getByRole('region', { name: 'Bulk edit' });
+    const first = (await tiles(page).first().locator('.tile-name').textContent()) ?? '';
+    await tiles(page).first().locator('.tile-open').click();
+    await expect(bar).toContainText('1 selected');
+    await page.getByRole('searchbox').fill(`${first} no such family`);
+    await expect(bar).toContainText('0 selected');
+    await expect(bar.getByRole('button', { name: 'Set category…' })).toBeDisabled();
+    await page.getByRole('searchbox').fill('');
+    await expect(bar).toContainText('1 selected');
+  });
+
+  test('a cleared minimum count keeps the typed value', async ({ page }) => {
+    const min = page.getByRole('spinbutton', { name: 'Styles minimum' });
+    const max = page.getByRole('spinbutton', { name: 'Styles maximum' });
+    await min.fill('');
+    await expect(min).toHaveValue('');
+    await min.pressSequentially('3');
+    await expect(min).toHaveValue('3');
+    await max.fill('2');
+    await max.blur();
+    await expect(min).toHaveValue('2');
+    await expect(page.getByRole('button', { name: 'Remove filter Styles 2–2' })).toBeVisible();
+  });
+
   test('deduplicate button shows confirmation message', async ({ page }) => {
     const dedupBtn = page.locator('[data-testid="dedup-btn"]');
     if (!(await dedupBtn.isVisible())) {

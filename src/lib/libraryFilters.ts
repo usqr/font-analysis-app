@@ -91,6 +91,18 @@ export function rangeActive(f: Filters, key: MetricKey, ext: Extents): boolean {
   return !!r && !!e && (r[0] > e[0] || r[1] < e[1]);
 }
 
+/** The value of a count field: a whole number of 1 or more. `undefined` for other text. */
+export function parseCount(text: string): number | undefined {
+  const n = Number(text);
+  return text.trim() !== '' && Number.isInteger(n) && n >= 1 ? n : undefined;
+}
+
+/** Makes sure that `min` ≤ `max`. The field that the user edited keeps its value. */
+export function orderCounts(min: number, max: number | null, edited: 'min' | 'max'): [number, number | null] {
+  if (max == null || min <= max) return [min, max];
+  return edited === 'min' ? [min, min] : [max, max];
+}
+
 function inCount(n: number, min: number, max: number | null): boolean {
   return n >= min && (max == null || n <= max);
 }

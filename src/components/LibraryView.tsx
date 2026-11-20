@@ -111,6 +111,8 @@ export function LibraryView() {
     () => families.filter((f) => matches(facts.get(f.familyName)!, filters, extents)),
     [families, facts, filters, extents],
   );
+  // Bulk actions apply only to the selected families that the filters show.
+  const bulkTargets = useMemo(() => visible.filter((f) => bulkSel.has(f.familyName)), [visible, bulkSel]);
   const chips = useMemo(() => activeChips(filters, extents), [filters, extents]);
   const cmpKeys = useMemo(() => new Set(compare.map((e) => e.key)), [compare]);
   const cmpCounts = useMemo(() => {
@@ -147,7 +149,7 @@ export function LibraryView() {
 
   const pickCategory = async (cat: FontCategory) => {
     if (!menu || menu.kind === 'cmp') return;
-    const fams = menu.kind === 'bulk' ? families.filter((f) => bulkSel.has(f.familyName)) : [menu.family];
+    const fams = menu.kind === 'bulk' ? bulkTargets : [menu.family];
     setMenu(null);
     if (await data.setCategory(fams, cat)) {
       toast.show(`Category set to ${CAT_LABELS[cat].long} for ${plural(fams.length, 'family', 'families')}`);
@@ -167,7 +169,7 @@ export function LibraryView() {
         />
       );
     }
-    const title = menu.kind === 'bulk' ? `Set category · ${plural(bulkSel.size, 'family', 'families')}` : 'Set category';
+    const title = menu.kind === 'bulk' ? `Set category · ${plural(bulkTargets.length, 'family', 'families')}` : 'Set category';
     const current = menu.kind === 'cat' ? resolved.get(menu.family.familyName)?.category : undefined;
     return <CategoryMenu anchor={menu.anchor} title={title} current={current} onPick={pickCategory} onClose={close} />;
   };
@@ -247,7 +249,7 @@ export function LibraryView() {
           <div className="dock">
             {bulk && (
               <BulkBar
-                count={bulkSel.size}
+                count={bulkTargets.length}
                 onSelectAll={() => setBulkSel(new Set(visible.map((f) => f.familyName)))}
                 onCategory={(anchor) => setMenu({ kind: 'bulk', anchor })}
                 onDone={toggleBulk}
