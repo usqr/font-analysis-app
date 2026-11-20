@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_FILTERS, activeChips, catKeyOf, clearChip, matches, metricExtents, rangeActive, setVf, toggleItem,
+  DEFAULT_FILTERS, activeChips, catKeyOf, clearChip, matches, metricExtents, orderCounts, parseCount, rangeActive, setVf, toggleItem,
   type Extents, type FamilyFacts, type Filters,
 } from '../src/lib/libraryFilters.ts';
 
@@ -97,4 +97,17 @@ test('catKeyOf turns a slab serif into "slab"', () => {
   assert.equal(catKeyOf({ category: 'serif', slab: true, origin: 'analysis' }), 'slab');
   assert.equal(catKeyOf({ category: 'display', slab: false, origin: 'metadata' }), 'display');
   assert.equal(catKeyOf(undefined), undefined);
+});
+
+test('parseCount accepts whole numbers of 1 or more only', () => {
+  assert.equal(parseCount('3'), 3);
+  assert.equal(parseCount('13'), 13);
+  for (const bad of ['', ' ', '0', '-2', '1.5', 'abc']) assert.equal(parseCount(bad), undefined, bad);
+});
+
+test('orderCounts keeps the edited field and moves the other one', () => {
+  assert.deepEqual(orderCounts(3, null, 'min'), [3, null]);
+  assert.deepEqual(orderCounts(3, 5, 'min'), [3, 5]);
+  assert.deepEqual(orderCounts(8, 5, 'min'), [8, 8]);
+  assert.deepEqual(orderCounts(8, 5, 'max'), [5, 5]);
 });

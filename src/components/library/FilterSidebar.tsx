@@ -1,7 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import { IS_STATIC } from '../../lib/env';
 import {
-  CAT_COLOR, CAT_LABELS, CAT_ORDER, METRICS, setVf, toggleItem,
+  CAT_COLOR, CAT_LABELS, CAT_ORDER, METRICS, orderCounts, parseCount, setVf, toggleItem,
   type Extents, type Filters, type MetricKey, type VfFilter,
 } from '../../lib/libraryFilters';
 import { HistogramFilter } from '../HistogramFilter';
@@ -13,16 +13,40 @@ export type TagMode = 'metadata' | 'extended';
 const VF_OPTIONS: [VfFilter, string][] = [['all', 'All'], ['variable', 'Variable'], ['static', 'Static']];
 const SOURCE_OPTIONS: [Filters['source'], string][] = [[null, 'All'], ['local', 'Local'], ['google', 'Google']];
 
-/** `null` for an empty field: no upper limit. */
-const parseMax = (v: string) => (v === '' ? null : Math.max(1, Number(v) || 1));
-const parseMin = (v: string) => Math.max(1, Number(v) || 1);
+type Bound = 'min' | 'max';
 
+/**
+ * Two count fields. A field with focus shows the typed text, so that an empty field does not change to 1.
+ * Only valid counts go to the filters. When a field loses focus, the minimum cannot be larger than the maximum.
+ */
 function MinMax({ label, min, max, onChange }: { label: string; min: number; max: number | null; onChange: (min: number, max: number | null) => void }) {
+  const [draft, setDraft] = useState<{ field: Bound; text: string } | null>(null);
+  const shown = (field: Bound, value: number | null) => (draft?.field === field ? draft.text : String(value ?? ''));
+  const type = (field: Bound, text: string) => {
+    setDraft({ field, text });
+    // An empty maximum means no upper limit.
+    const n = field === 'max' && text === '' ? null : parseCount(text);
+    if (n === undefined) return;
+    if (field === 'min' && n !== null) onChange(n, max);
+    else if (field === 'max') onChange(min, n);
+  };
+  const leave = (field: Bound) => {
+    setDraft(null);
+    const [a, b] = orderCounts(min, max, field);
+    if (a !== min || b !== max) onChange(a, b);
+  };
+  const input = (field: Bound, value: number | null) => (
+    <input
+      className="num" type="number" min={1} inputMode="numeric" placeholder={field === 'max' ? '∞' : undefined}
+      value={shown(field, value)} aria-label={`${label} ${field === 'min' ? 'minimum' : 'maximum'}`}
+      onChange={(e) => type(field, e.target.value)} onBlur={() => leave(field)}
+    />
+  );
   return (
     <div className="minmax">
-      <label>Min<input className="num" type="number" min={1} inputMode="numeric" value={min} aria-label={`${label} minimum`} onChange={(e) => onChange(parseMin(e.target.value), max)} /></label>
+      <label>Min{input('min', min)}</label>
       <span className="dash" aria-hidden="true">–</span>
-      <label>Max<input className="num" type="number" min={1} inputMode="numeric" placeholder="∞" value={max ?? ''} aria-label={`${label} maximum`} onChange={(e) => onChange(min, parseMax(e.target.value))} /></label>
+      <label>Max{input('max', max)}</label>
     </div>
   );
 }
