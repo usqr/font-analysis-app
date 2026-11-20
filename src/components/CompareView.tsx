@@ -18,6 +18,8 @@ function registerFace(css: string, bytes: ArrayBuffer): Promise<void> {
   if (!p) {
     const face = new FontFace(css, bytes);
     p = face.load().then(() => { document.fonts.add(face); });
+    // A failed load must not stay cached, so that a later visit tries again.
+    p.catch(() => registered.delete(css));
     registered.set(css, p);
   }
   return p;
@@ -85,7 +87,7 @@ export function CompareView() {
   const [panelW, setPanelW] = useState(320);
   const [resizing, setResizing] = useState(false);
   const canvasRef = useRef<HTMLElement>(null);
-  const canvasW = useWidth(canvasRef, fonts.length > 0);
+  const canvasW = useWidth(canvasRef, fonts.length > 0 && !loading);
 
   useEffect(() => {
     if (refs.length === 0) { setFonts([]); return; }

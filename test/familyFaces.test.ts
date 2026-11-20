@@ -95,7 +95,7 @@ test('styleName adds a width that is not the default', () => {
 test('the compare parameter keeps weights of variable files', () => {
   assert.equal(entryKey({ fontId: 'a' }), 'a');
   assert.equal(compareParam([{ fontId: 'a' }, { fontId: 'b', wght: 700 }]), 'a,b@700');
-  assert.deepEqual(parseCompareParam('a, b@700,,a,c@x'), [{ fontId: 'a' }, { fontId: 'b', wght: 700 }, { fontId: 'c' }]);
+  assert.deepEqual(parseCompareParam('a, b@700,,a,c@x,d@'), [{ fontId: 'a' }, { fontId: 'b', wght: 700 }, { fontId: 'c' }, { fontId: 'd' }]);
   assert.deepEqual(parseCompareParam(null), []);
 });
 

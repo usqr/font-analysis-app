@@ -84,11 +84,11 @@ function ScanPanel({ onDone, onClose, onError }: { onDone: () => Promise<void>; 
           {saved.map((p) => (
             <span key={p} className="tchip">
               <button type="button" className="path-btn" title={p} onClick={() => setPath(p)}>{p.split('/').pop() || p}</button>
-              <button type="button" className="icon-btn" aria-label={`Remove saved path ${p}`} onClick={async () => setSaved(await removeFontPath(p))}>×</button>
+              <button type="button" className="icon-btn" aria-label={`Remove saved path ${p}`} onClick={() => removeFontPath(p).then(setSaved, (e) => onError(message(e)))}>×</button>
             </span>
           ))}
           {path.trim() && !saved.includes(path.trim()) && (
-            <button type="button" className="btn btn-sm btn-ghost" onClick={async () => setSaved(await addFontPath(path.trim()))}>Save this path</button>
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => addFontPath(path.trim()).then(setSaved, (e) => onError(message(e)))}>Save this path</button>
           )}
         </div>
       )}

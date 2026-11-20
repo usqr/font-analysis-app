@@ -30,7 +30,7 @@ export function parseCompareParam(param: string | null): CompareRef[] {
   for (const part of (param ?? '').split(',')) {
     const [fontId, w] = part.trim().split('@');
     if (!fontId) continue;
-    const wght = w === undefined ? undefined : Number(w);
+    const wght = w ? Number(w) : undefined;
     const ref: CompareRef = wght !== undefined && Number.isFinite(wght) ? { fontId, wght } : { fontId };
     const key = entryKey(ref);
     if (seen.has(key)) continue;
