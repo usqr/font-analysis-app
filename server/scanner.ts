@@ -4,7 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 import * as opentype from 'opentype.js';
 import { decompress as woff2Decompress } from 'wawoff2';
 import type { StoredFont, FontMetrics, FontCategory, FontSource, GlyphSvg, FullAnalysis } from './database.js';
-import type { ContrastResult, XHeightResult, ProportionsResult, WeightResult, SpacingResult } from '../src/types/index.js';
+import type { ProportionsResult, SpacingResult } from '../src/types/index.js';
+import { measureContrast, measureFillRatio, measureWeight, measureXHeight } from '../src/lib/glyphMeasures.js';
 
 const FONT_EXTENSIONS = new Set(['.ttf', '.otf', '.woff', '.woff2']);
 
@@ -222,91 +223,26 @@ function flattenCommands(commands: PathCmd[]): { x: number; y: number }[] {
   return pts;
 }
 
-function polyArea(pts: { x: number; y: number }[]): number {
-  let a = 0;
-  for (let i = 0; i < pts.length; i++) {
-    const j = (i + 1) % pts.length;
-    a += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
-  }
-  return a / 2;
-}
-
-function splitContoursFromCommands(commands: PathCmd[]): PathCmd[][] {
-  const contours: PathCmd[][] = [];
-  let cur: PathCmd[] = [];
-  for (const c of commands) {
-    cur.push(c);
-    if (c.type === 'Z') { contours.push(cur); cur = []; }
-  }
-  if (cur.length > 0) contours.push(cur);
-  return contours;
-}
-
+/**
+ * Library metrics (0..1 scales for the filters). Contrast is thin / thick of
+ * the "o" stroke, weight is the filled part of the "o" box.
+ */
 export function computeFontMetrics(font: opentype.Font): FontMetrics | null {
   try {
     const oGlyph = font.charToGlyph('o');
     const xGlyph = font.charToGlyph('x');
-    const tGlyph = font.charToGlyph('T');
     if (!oGlyph || !xGlyph || oGlyph.index === 0 || xGlyph.index === 0) return null;
-
     const oBB = oGlyph.getBoundingBox();
-    const xBB = xGlyph.getBoundingBox();
     const oW = oBB.x2 - oBB.x1;
     const oH = oBB.y2 - oBB.y1;
-    const xH = xBB.y2 - xBB.y1;
-    if (oW === 0 || oH === 0 || xH === 0) return null;
-
-    const widthRatio = oW / oH;
-    const xHeightRatio = xH / font.unitsPerEm;
-
-    const oPath = oGlyph.getPath(0, 0, font.unitsPerEm);
-    const contourCmds = splitContoursFromCommands(oPath.commands as PathCmd[]);
-    const polys = contourCmds.map(flattenCommands).filter(p => p.length >= 3);
-    const areas = polys.map(p => ({ pts: p, area: Math.abs(polyArea(p)) }));
-    areas.sort((a, b) => b.area - a.area);
-
-    let contrast = 1;
-    if (areas.length >= 2) {
-      const outer = areas[0].pts;
-      const inner = areas[1].pts;
-      let maxDist = 0, minDist = Infinity;
-      const step = Math.max(1, Math.floor(outer.length / 80));
-      for (let i = 0; i < outer.length; i += step) {
-        const op = outer[i];
-        let closest = Infinity;
-        for (const ip of inner) {
-          const d = Math.hypot(op.x - ip.x, op.y - ip.y);
-          if (d < closest) closest = d;
-        }
-        if (closest > maxDist) maxDist = closest;
-        if (closest < minDist) minDist = closest;
-      }
-      if (maxDist > 0) contrast = minDist / maxDist;
-    }
-
-    let fillWeight = 0;
-    if (areas.length >= 2) {
-      const filledArea = areas[0].area - areas[1].area;
-      const bbArea = oW * oH;
-      fillWeight = bbArea > 0 ? filledArea / bbArea : 0;
-    } else if (areas.length === 1) {
-      const bbArea = oW * oH;
-      fillWeight = bbArea > 0 ? areas[0].area / bbArea : 0;
-    }
-
-    const tBB = (tGlyph && tGlyph.index !== 0) ? tGlyph.getBoundingBox() : null;
-    if (tBB) {
-      const capH = tBB.y2 - tBB.y1;
-      if (capH > 0) {
-        // refine xHeight ratio to be relative to em
-      }
-    }
-
+    const xh = measureXHeight(font);
+    if (oW === 0 || oH === 0 || !xh) return null;
+    const c = measureContrast(font, 'o');
     return {
-      contrast: Math.max(0, Math.min(1, contrast)),
-      weight: Math.max(0, Math.min(1, fillWeight)),
-      width: Math.max(0, Math.min(2, widthRatio)),
-      xHeight: Math.max(0, Math.min(1, xHeightRatio)),
+      contrast: c ? Math.max(0, Math.min(1, 1 / c.contrastRatio)) : 1,
+      weight: measureFillRatio(font, 'o') ?? 0,
+      width: Math.max(0, Math.min(2, oW / oH)),
+      xHeight: Math.max(0, Math.min(1, xh.xHeightToEm)),
     };
   } catch {
     return null;
@@ -525,70 +461,7 @@ export function extractGlyphSvgs(font: opentype.Font): Record<string, GlyphSvg> 
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function computeContrastForGlyph(font: opentype.Font, char: string): ContrastResult | null {
-  const glyph = font.charToGlyph(char);
-  if (!glyph || glyph.index === 0) return null;
-
-  const glyphPath = glyph.getPath(0, 0, font.unitsPerEm);
-  const contourCmds = splitContoursFromCommands(glyphPath.commands as PathCmd[]);
-  const polys = contourCmds.map(flattenCommands).filter(p => p.length >= 3);
-  const areas = polys.map(p => ({ pts: p, area: Math.abs(polyArea(p)) }));
-  areas.sort((a, b) => b.area - a.area);
-  if (areas.length < 2) return null;
-
-  const outer = areas[0].pts;
-  const inner = areas[1].pts;
-  let maxDist = 0, minDist = Infinity;
-  let thickOuter = outer[0], thickInner = inner[0];
-  let thinOuter = outer[0], thinInner = inner[0];
-
-  const step = Math.max(1, Math.floor(outer.length / 120));
-  for (let i = 0; i < outer.length; i += step) {
-    const op = outer[i];
-    let closest = Infinity;
-    let closestPt = inner[0];
-    for (const ip of inner) {
-      const d = Math.hypot(op.x - ip.x, op.y - ip.y);
-      if (d < closest) { closest = d; closestPt = ip; }
-    }
-    if (closest > maxDist) { maxDist = closest; thickOuter = op; thickInner = closestPt; }
-    if (closest < minDist) { minDist = closest; thinOuter = op; thinInner = closestPt; }
-  }
-
-  if (maxDist === 0 || !isFinite(minDist) || minDist === 0) return null;
-
-  return {
-    glyph: char,
-    maxWidth: maxDist,
-    minWidth: minDist,
-    contrastRatio: maxDist / minDist,
-    thickestSample: { outerPoint: thickOuter, innerPoint: thickInner, width: maxDist, lengthAlongPath: 0 },
-    thinnestSample: { outerPoint: thinOuter, innerPoint: thinInner, width: minDist, lengthAlongPath: 0 },
-    allSamples: [],
-  };
-}
-
 export function computeFullAnalysis(font: opentype.Font): FullAnalysis {
-  const contrastLower = computeContrastForGlyph(font, 'o');
-  const contrastUpper = computeContrastForGlyph(font, 'O');
-
-  let xHeight: XHeightResult | null = null;
-  const xGlyph = font.charToGlyph('x');
-  const tGlyph = font.charToGlyph('T');
-  if (xGlyph && xGlyph.index !== 0 && tGlyph && tGlyph.index !== 0) {
-    const xBB = xGlyph.getBoundingBox();
-    const tBB = tGlyph.getBoundingBox();
-    const xH = xBB.y2 - xBB.y1;
-    const capH = tBB.y2 - tBB.y1;
-    if (xH > 0 && capH > 0) {
-      xHeight = {
-        xHeight: xH, capHeight: capH,
-        ascender: font.ascender, descender: font.descender, unitsPerEm: font.unitsPerEm,
-        xHeightToCapHeight: xH / capH, xHeightToEm: xH / font.unitsPerEm, capHeightToEm: capH / font.unitsPerEm,
-      };
-    }
-  }
-
   let proportions: ProportionsResult | null = null;
   const oGlyph = font.charToGlyph('o');
   if (oGlyph && oGlyph.index !== 0) {
@@ -597,28 +470,6 @@ export function computeFullAnalysis(font: opentype.Font): FullAnalysis {
     const h = bb.y2 - bb.y1;
     if (w > 0 && h > 0) {
       proportions = { glyphWidth: w, glyphHeight: h, widthToHeightRatio: w / h, advanceWidth: oGlyph.advanceWidth ?? 0 };
-    }
-  }
-
-  let weight: WeightResult | null = null;
-  if (oGlyph && oGlyph.index !== 0) {
-    const bb = oGlyph.getBoundingBox();
-    const w = bb.x2 - bb.x1;
-    const h = bb.y2 - bb.y1;
-    if (w > 0 && h > 0) {
-      const oPath = oGlyph.getPath(0, 0, font.unitsPerEm);
-      const cs = splitContoursFromCommands(oPath.commands as PathCmd[]);
-      const ps = cs.map(flattenCommands).filter(p => p.length >= 3);
-      const sortedAreas = ps.map(p => ({ area: Math.abs(polyArea(p)) }));
-      sortedAreas.sort((a, b) => b.area - a.area);
-      const filledArea = sortedAreas.length >= 2 ? sortedAreas[0].area - sortedAreas[1].area
-        : sortedAreas.length === 1 ? sortedAreas[0].area : 0;
-      const bbArea = w * h;
-      const fillRatio = bbArea > 0 ? filledArea / bbArea : 0;
-      const renderScale = 200 / font.unitsPerEm;
-      const totalPixels = Math.ceil(w * renderScale) * Math.ceil(h * renderScale);
-      const filledPixels = Math.round(totalPixels * Math.max(0, Math.min(1, fillRatio)));
-      weight = { filledPixels, totalPixels, fillRatio: Math.max(0, Math.min(1, fillRatio)), fillPercentage: Math.max(0, Math.min(100, fillRatio * 100)) };
     }
   }
 
@@ -631,7 +482,14 @@ export function computeFullAnalysis(font: opentype.Font): FullAnalysis {
     spacing = { testString: testStr, totalAdvanceWidth: totalAdv, mAdvanceWidth: mAdv, ratio: totalAdv / mAdv, charCount: testStr.length, avgCharWidth: totalAdv / testStr.length };
   }
 
-  return { contrastLower, contrastUpper, xHeight, proportions, weight, spacing };
+  return {
+    contrastLower: measureContrast(font, 'o'),
+    contrastUpper: measureContrast(font, 'O'),
+    xHeight: measureXHeight(font),
+    proportions,
+    weight: measureWeight(font),
+    spacing,
+  };
 }
 
 export interface ScanFontResult {

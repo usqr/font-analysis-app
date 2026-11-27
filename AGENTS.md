@@ -43,6 +43,16 @@ npm run dev          # Vite :5173 + Express API :3001 (concurrently)
 
 **Gotcha:** static weight/slant swaps load a new font file asynchronously. Poll until the rendered `fontFamily` changes.
 
+## Measurements (2026-11-27)
+
+The server (scan, DB build) and the browser (local fonts) use the same code in `src/lib/glyphMeasures.ts`. It has no DOM code.
+
+- `glyphRaster.ts` fills the outline on a grid with the nonzero rule. Overlapping contours (variable fonts, for example Akshar) merge, so the result does not depend on how the font splits the outline.
+- `strokeContrast.ts`: contrast of "o" / "O". The code finds the counter (largest enclosed empty region, after it closes gaps narrower than 6% of the em). Rays go out from the counter center. On each ray, the width is the diameter of the largest circle in the stroke. A stroke counts only if the empty regions on its two sides differ, so tails inside the counter (Alex Brush "O") do not count. Rays near a gap are ignored (tapered ends). A median over 9 rays removes joins and spurs. Outline faces (Almendra Display) measure the drawn line.
+- Weight = filled area of "o" / its box, with overlaps counted once.
+- X-height and cap height: OS/2 `sxHeight` / `sCapHeight` first (if plausible), else the top of "x" / "H". Script swashes on "T" no longer change the cap height.
+- If a glyph has no counter, the contrast is `null` (the view shows only the other glyph).
+
 ## Follow-up work (TODO, 2026-11-20)
 
 - [ ] Split the components that are longer than the 40-line limit. AnalyzeView is done (`3fb2378`). Still open: `GlyphsView.tsx` (378 lines), `LibraryView.tsx` (273), `library/FamilyTile.tsx` (257), `ContrastView.tsx` (229).

@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Font } from 'opentype.js';
 import type { AnalysisTab, FontData, FullAnalysis } from '../../types';
-import { analyzeContrast } from '../../analysis/contrast';
-import { analyzeXHeight } from '../../analysis/xHeight';
+import { measureContrast, measureWeight, measureXHeight } from '../../lib/glyphMeasures';
 import { analyzeProportions } from '../../analysis/proportions';
-import { analyzeWeight } from '../../analysis/weight';
 import { analyzeSpacing } from '../../analysis/spacing';
 import { extractOTFFeatures } from '../../lib/otfFeatures';
 import { extractRawMetadata } from '../../lib/rawMetadata';
@@ -15,11 +13,11 @@ type Cache = Partial<FullAnalysis>;
 const TAB_ANALYSIS: Partial<Record<AnalysisTab, { done: (c: Cache) => boolean; run: (font: Font) => Cache }>> = {
   contrast: {
     done: (c) => c.contrastLower !== undefined,
-    run: (f) => ({ contrastLower: analyzeContrast(f, 'o', 120), contrastUpper: analyzeContrast(f, 'O', 120) }),
+    run: (f) => ({ contrastLower: measureContrast(f, 'o'), contrastUpper: measureContrast(f, 'O') }),
   },
-  xheight: { done: (c) => c.xHeight !== undefined, run: (f) => ({ xHeight: analyzeXHeight(f) }) },
+  xheight: { done: (c) => c.xHeight !== undefined, run: (f) => ({ xHeight: measureXHeight(f) }) },
   proportions: { done: (c) => c.proportions !== undefined, run: (f) => ({ proportions: analyzeProportions(f) }) },
-  weight: { done: (c) => c.weight !== undefined, run: (f) => ({ weight: analyzeWeight(f) }) },
+  weight: { done: (c) => c.weight !== undefined, run: (f) => ({ weight: measureWeight(f) }) },
   spacing: { done: (c) => c.spacing !== undefined, run: (f) => ({ spacing: analyzeSpacing(f) }) },
 };
 
