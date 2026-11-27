@@ -17,5 +17,5 @@
     "noFallthroughCasesInSwitch": true,
     "esModuleInterop": true
   },
-  "include": ["server", "src/types/opentype.d.ts", "src/types/wawoff2.d.ts", "src/lib/fontNameTokens.ts", "src/lib/extendedTags.ts", "src/types/index.ts"]
+  "include": ["server", "src/types/opentype.d.ts", "src/types/wawoff2.d.ts", "src/lib/fontNameTokens.ts", "src/lib/extendedTags.ts", "src/lib/glyphRaster.ts", "src/lib/strokeContrast.ts", "src/lib/glyphMeasures.ts", "src/types/index.ts"]
 }

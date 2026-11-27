@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { FontData, ContrastResult, XHeightResult } from '../types';
 import { drawGlyph } from '../lib/pathUtils';
 import { useCanvasResize } from '../lib/useCanvasResize';
-import { analyzeXHeight } from '../analysis/xHeight';
+import { measureXHeight } from '../lib/glyphMeasures';
 
 // Palette of the Analyze mock (design/library-redesign/analyze.html).
 const C = {
@@ -70,7 +70,7 @@ export function ContrastView({
     }
 
     const { font } = fontData;
-    const xhResult = precomputedXHeight ?? analyzeXHeight(font);
+    const xhResult = precomputedXHeight ?? measureXHeight(font);
     const totalHeight = font.ascender - font.descender;
     const padding = 60;
     const leftMargin = 100;

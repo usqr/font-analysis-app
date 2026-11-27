@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObjec
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import * as opentype from 'opentype.js';
 import { fetchFontData } from '../lib/api';
-import { analyzeXHeight } from '../analysis/xHeight';
+import { measureXHeight } from '../lib/glyphMeasures';
 import { COMPARE_MAX, entryKey, parseCompareParam, type CompareRef } from '../lib/compareEntries';
 import { weightLabel } from '../lib/fontFamilies';
 import { CompareStage } from './compare/CompareStage';
@@ -31,7 +31,7 @@ async function loadCompared(ref: CompareRef, i: number): Promise<ComparedFont> {
   const font = opentype.parse(bytes);
   const css = `__cmp_${ref.fontId}`;
   await registerFace(css, bytes);
-  const xh = analyzeXHeight(font);
+  const xh = measureXHeight(font);
   const variable = !!(font.tables as { fvar?: unknown }).fvar;
   const italic = /italic|oblique/i.test(data.subfamilyName) ? ' Italic' : '';
   return {
