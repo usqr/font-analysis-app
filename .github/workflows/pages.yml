@@ -29,7 +29,7 @@ jobs:
       # after you rebuild google-fonts-db.json from a newer clone.
       - name: Fetch google/fonts file list
         env:
-          GOOGLE_FONTS_REF: 647e52b1cbc941916c322994994bbe2e3a08ca6e
+          GOOGLE_FONTS_REF: 5026800714d07231937d92eb4cceabf06e05d74e
         run: |
           git init -q google-fonts
           git -C google-fonts fetch -q --depth=1 --filter=blob:none https://github.com/google/fonts.git "$GOOGLE_FONTS_REF"
